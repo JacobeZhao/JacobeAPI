@@ -3,7 +3,7 @@
   "identifier": "manager",
   "description": "Full library management and explicit desktop settings controls.",
   "windows": ["manager"],
-  "platforms": ["windows"],
+  "platforms": ["windows", "macOS"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",

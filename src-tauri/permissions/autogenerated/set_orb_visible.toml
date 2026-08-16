@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-orb-visible"
+description = "Enables the set_orb_visible command without any pre-configured scope."
+commands.allow = ["set_orb_visible"]
+
+[[permission]]
+identifier = "deny-set-orb-visible"
+description = "Denies the set_orb_visible command without any pre-configured scope."
+commands.deny = ["set_orb_visible"]

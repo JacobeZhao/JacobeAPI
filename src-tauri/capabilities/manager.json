@@ -1,0 +1,37 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "manager",
+  "description": "Full library management and explicit desktop settings controls.",
+  "windows": ["manager"],
+  "platforms": ["windows"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-library",
+    "allow-commit-library",
+    "allow-copy-text",
+    "allow-pick-json-file",
+    "allow-save-text-file",
+    "allow-get-desktop-preferences",
+    "allow-set-autostart",
+    "allow-set-orb-visible",
+    "allow-set-always-on-top"
+    ,"allow-get-account-session"
+    ,"allow-login-netapi"
+    ,"allow-logout-netapi"
+    ,"allow-get-dashboard"
+    ,"allow-get-account-summary"
+    ,"allow-get-leaderboard"
+    ,"allow-scan-cli-configs"
+    ,"allow-preview-cli-config"
+    ,"allow-apply-cli-config"
+    ,"allow-list-cli-config-backups"
+    ,"allow-restore-cli-config-backup"
+    ,"updater:default"
+    ,"process:allow-restart"
+    ,{
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://netapi.cc/*" }]
+    }
+  ]
+}

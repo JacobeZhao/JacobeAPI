@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-cli-config-backup"
+description = "Enables the restore_cli_config_backup command without any pre-configured scope."
+commands.allow = ["restore_cli_config_backup"]
+
+[[permission]]
+identifier = "deny-restore-cli-config-backup"
+description = "Denies the restore_cli_config_backup command without any pre-configured scope."
+commands.deny = ["restore_cli_config_backup"]

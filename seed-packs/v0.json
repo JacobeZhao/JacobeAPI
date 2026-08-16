@@ -1,0 +1,45 @@
+{
+  "version": 0,
+  "skills": [
+    {
+      "id": "d7b4dd11-9375-4d8e-945b-cbc37c112d91",
+      "kind": "skill",
+      "title": "把复杂内容讲明白",
+      "description": "把专业材料改写成清楚、准确、适合新手阅读的说明。",
+      "prompt": "请用清晰、准确的中文解释下面的内容。先给结论，再拆解关键概念；避免不必要的术语，并用一个贴近日常的例子帮助理解。\n\n内容：{{content}}",
+      "installNotes": "将这段提示词复制到你常用的 AI 对话工具中即可使用。",
+      "tags": ["写作", "新手友好"],
+      "favorite": true,
+      "createdAt": "2026-08-15T12:00:00.000Z",
+      "updatedAt": "2026-08-15T12:00:00.000Z"
+    },
+    {
+      "id": "708570e9-13d8-4b64-a93a-acde863b04c4",
+      "kind": "skill",
+      "title": "代码审查清单",
+      "description": "优先发现真实缺陷、回归风险和缺失测试。",
+      "prompt": "请审查下面的代码改动。先按严重程度列出问题，并为每个问题给出文件位置、影响和可执行的修复建议；最后补充测试缺口。\n\n代码：{{code}}",
+      "installNotes": "可保存为个人代码审查模板。",
+      "tags": ["开发", "代码审查"],
+      "favorite": false,
+      "createdAt": "2026-08-15T12:00:00.000Z",
+      "updatedAt": "2026-08-15T12:00:00.000Z"
+    }
+  ],
+  "mcps": [
+    {
+      "id": "9974b50c-053c-4dce-a1ad-82c069e576eb",
+      "kind": "mcp",
+      "title": "本地文件工具",
+      "description": "为支持 MCP 的客户端提供受控的本地文件访问能力。",
+      "serverName": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\you\\Documents"],
+      "env": {},
+      "tags": ["文件", "效率"],
+      "favorite": true,
+      "createdAt": "2026-08-15T12:00:00.000Z",
+      "updatedAt": "2026-08-15T12:00:00.000Z"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "JacobeAPI",
+  "version": "0.1.1",
+  "identifier": "com.jacobe.skills",
+  "build": {
+    "beforeDevCommand": "npm run dev:desktop-ui",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build:desktop-ui",
+    "frontendDist": "../dist-desktop"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "manager",
+        "title": "JacobeAPI",
+        "url": "desktop-manager.html",
+        "width": 1180,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost",
+      "capabilities": ["orb", "quick", "manager"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": ["nsis"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg4Rjg4MTM0MEFCQzhDRQpSV1RPeUt0QUU0aVBDS2hSQlB2ZkNTREppY2p5aXMxOFZ3ZnVmQzNEckt2VTJJbm1MSTVNY1U3eQo=",
+      "endpoints": [
+        "https://github.com/JacobeZhao/JacobeAPI/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

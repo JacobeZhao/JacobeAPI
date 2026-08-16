@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "orb",
+  "description": "Minimal controls for the floating JacobeAPI launcher.",
+  "windows": ["orb"],
+  "platforms": ["windows"],
+  "permissions": [
+    "allow-begin-orb-drag",
+    "allow-toggle-quick-panel",
+    "allow-orb-drag-ended"
+  ]
+}

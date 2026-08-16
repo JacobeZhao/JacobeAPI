@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-cli-config"
+description = "Enables the preview_cli_config command without any pre-configured scope."
+commands.allow = ["preview_cli_config"]
+
+[[permission]]
+identifier = "deny-preview-cli-config"
+description = "Denies the preview_cli_config command without any pre-configured scope."
+commands.deny = ["preview_cli_config"]

@@ -1,0 +1,16 @@
+node_modules/
+.idea/
+dist/
+dist-desktop/
+release/
+coverage/
+playwright-report/
+test-results/
+artifacts/
+src-tauri/target/
+src-tauri/target-msvc/
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example

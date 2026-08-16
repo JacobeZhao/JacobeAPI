@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "6d054264-09bd-49e6-bf3a-1d7b7aa98185",
+      "kind": "skill",
+      "title": "引导式多代理开发",
+      "description": "通过需求澄清、并行探索、实施规划和验收关卡，协作完成复杂功能。",
+      "prompt": "$guided-multi-agent-development\n\n{{feature_request}}",
+      "installNotes": "需要先在本机安装 guided-multi-agent-development Skill，并在支持多代理的 Codex 环境中使用；复制此卡片不会自动安装 Skill。",
+      "tags": ["开发", "多代理", "工作流"],
+      "favorite": true,
+      "createdAt": "2026-08-16T00:00:00.000Z",
+      "updatedAt": "2026-08-16T00:00:00.000Z"
+    },
+    {
+      "id": "3c2757f7-d27c-440d-89d1-c79306393ff3",
+      "kind": "skill",
+      "title": "持续技术债清理",
+      "description": "持续审计并分批清理架构、代码、测试、依赖和文档中的技术债。",
+      "prompt": "$continuous-technical-debt-cleanup\n\n{{repository_or_goal}}",
+      "installNotes": "需要先在本机安装 continuous-technical-debt-cleanup Skill，并在支持多代理的 Codex 环境中使用；复制此卡片不会自动安装 Skill。",
+      "tags": ["开发", "技术债", "多代理"],
+      "favorite": false,
+      "createdAt": "2026-08-16T00:00:00.000Z",
+      "updatedAt": "2026-08-16T00:00:00.000Z"
+    }
+  ],
+  "mcps": [
+    {
+      "id": "c825fa52-b857-4e11-99a9-e36f5ca62b9e",
+      "kind": "mcp",
+      "title": "Filesystem",
+      "description": "需要 Node.js/npm。先把 YOUR_NAME 替换为你的 Windows 用户名，只授权必要目录；此工具可读取、写入和删除授权目录内的文件。",
+      "serverName": "filesystem",
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\YOUR_NAME\\Documents"],
+      "env": {},
+      "tags": ["文件", "Windows", "需配置", "高权限"],
+      "favorite": true,
+      "createdAt": "2026-08-16T00:00:00.000Z",
+      "updatedAt": "2026-08-16T00:00:00.000Z"
+    },
+    {
+      "id": "0eb7991a-9f61-4b7f-9d66-dc8755725c9e",
+      "kind": "mcp",
+      "title": "Sequential Thinking",
+      "description": "需要 Node.js/npm，用可调整的分步思考过程处理复杂分析、规划和问题拆解。",
+      "serverName": "sequential-thinking",
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "env": {},
+      "tags": ["思考", "规划", "需 Node.js"],
+      "favorite": false,
+      "createdAt": "2026-08-16T00:00:00.000Z",
+      "updatedAt": "2026-08-16T00:00:00.000Z"
+    },
+    {
+      "id": "8bc94a9c-71b6-481a-a5be-0d078ba49f66",
+      "kind": "mcp",
+      "title": "Playwright",
+      "description": "需要 Node.js/npm，可控制浏览器并访问页面数据；建议使用独立的浏览器配置完成自动化和测试。",
+      "serverName": "playwright",
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@playwright/mcp@latest"],
+      "env": {},
+      "tags": ["浏览器", "自动化", "高权限", "需 Node.js"],
+      "favorite": false,
+      "createdAt": "2026-08-16T00:00:00.000Z",
+      "updatedAt": "2026-08-16T00:00:00.000Z"
+    }
+  ]
+}

@@ -41,7 +41,7 @@ src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
 ## GitHub Actions 发布
 
-手动运行 `Release JacobeAPI` workflow 会生成未公证也可下载的 Universal app ZIP 和 DMG artifact，不会创建 GitHub Release。推送 `v*` tag 时，Windows job 先创建 Release 与 Windows updater 条目；macOS job 随后向同一 Release 添加 DMG、签名 updater 包，并由官方 Tauri action 在保留 Windows 条目的基础上合并 macOS updater 元数据。最终 `latest.json` 同时支持 Windows、Apple Silicon 和 Intel 客户端。
+手动运行 `Release JacobeAPI` workflow，或推送专用的 `macos-build` 测试分支，会生成未公证也可下载的 Universal app ZIP 和 DMG artifact，不会创建 GitHub Release。推送 `v*` tag 时，Windows job 先创建 Release 与 Windows updater 条目；macOS job 随后向同一 Release 添加 DMG、签名 updater 包，并由官方 Tauri action 在保留 Windows 条目的基础上合并 macOS updater 元数据。最终 `latest.json` 同时支持 Windows、Apple Silicon 和 Intel 客户端。
 
 正式对外分发需要 Apple Developer Program 的 Developer ID Application 证书和 Apple 公证凭据。在仓库的 `Settings > Secrets and variables > Actions` 中配置：
 

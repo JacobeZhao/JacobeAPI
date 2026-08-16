@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "macos-build"
   workflow_dispatch:
 
 permissions:
@@ -11,7 +13,7 @@ permissions:
 
 jobs:
   release-windows:
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +43,7 @@ jobs:
 
   release-macos:
     needs: release-windows
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.release-windows.result == 'success') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/macos-build' || needs.release-windows.result == 'success') }}
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -81,10 +83,10 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Build unsigned Universal macOS app and DMG
-        if: github.event_name == 'workflow_dispatch' && steps.apple-signing.outputs.enabled == 'false'
+        if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/macos-build') && steps.apple-signing.outputs.enabled == 'false'
         run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg --no-sign
       - name: Build signed and notarized Universal macOS app and DMG
-        if: github.event_name == 'workflow_dispatch' && steps.apple-signing.outputs.enabled == 'true'
+        if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/macos-build') && steps.apple-signing.outputs.enabled == 'true'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -96,7 +98,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
       - name: Build and append Universal macOS release and updater metadata
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

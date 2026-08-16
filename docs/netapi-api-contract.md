@@ -12,7 +12,7 @@
 
 所有接口仅允许 HTTPS，使用 `application/json; charset=utf-8`。时间字段均为 ISO 8601 UTC。服务端可以增加响应字段，客户端必须忽略未知新增字段；删除字段、改变类型或语义必须发布新版本。
 
-Access Token 使用 `Authorization: Bearer <token>`。Access Token、Refresh Token 与网关 Key 不得写入普通文件、日志、IPC 响应或前端状态；桌面端将其保存到 Windows Credential Manager。
+Access Token 使用 `Authorization: Bearer <token>`。Access Token、Refresh Token 与网关 Key 不得写入普通文件、日志、IPC 响应或前端状态；桌面端将其保存到 Windows Credential Manager 或 macOS Keychain。
 
 整数 Token、请求数和精确金额全部使用十进制字符串，不得使用 JSON number。Token 字符串满足 `^(0|[1-9][0-9]*)$`，金额格式和精度由 `unit` 决定。
 
@@ -71,6 +71,35 @@ Access Token 使用 `Authorization: Bearer <token>`。Access Token、Refresh Tok
 ### `GET /account/me`
 
 返回 `id`、`displayName`、可选 `email`、`status` 和 `rankingVisibility`。排行榜名称必须由服务端脱敏，禁止向其他用户泄露邮箱、手机号、真实姓名或内部数据库主键。
+
+### `GET /account/entitlements`
+
+桌面端必须通过独立、可缓存但可撤销的 entitlement 判断是否解除访客资料库额度，不能从余额、套餐名称、排行榜状态或 HTTP 登录成功自行推断。
+
+```json
+{
+  "generatedAt": "2026-08-16T08:30:00Z",
+  "library": {
+    "state": "unlocked",
+    "guestLimits": { "skills": "3", "mcps": "3" },
+    "expiresAt": "2026-08-16T09:30:00Z"
+  }
+}
+```
+
+`library.state` 固定为 `unlocked` 或 `guest-limited`。`guestLimits` 即使当前已解锁也必须返回，便于客户端在撤销或过期后立即应用访客规则；数值使用十进制字符串。`expiresAt` 是本次授权判定的最晚有效时间，不得晚于当前 Access Token 的有效期。上游需要说明哪些账户状态、套餐和风控事件会变更 entitlement，并在 OpenAPI 中承诺稳定语义。
+
+客户端离线时只可在 `expiresAt` 之前沿用最后一次已验证的 `unlocked` 状态。达到 `expiresAt`、收到 `SESSION_EXPIRED`、用户退出或上游明确返回 `guest-limited` 后，后续新增必须恢复访客额度；已有超额资料不得被裁剪。正式发布不得用“本机仍有 Refresh Token”替代 entitlement 校验。
+
+### 会话恢复、撤销与离线语义
+
+- 应用启动时可从 Windows Credential Manager 或 macOS Keychain 读取 Refresh Token，并调用 `/auth/refresh` 恢复会话；不得把用户密码作为恢复凭据。
+- 上游必须定义 Access Token 与 Refresh Token 的绝对过期时间、空闲过期时间、token family 轮换规则和允许的时钟偏差。
+- `/auth/logout` 必须撤销当前设备的 token family；上游还应提供撤销所有设备或指定设备会话的账户端能力，并说明撤销传播的最大延迟。
+- 本机退出立即清除凭据、账户摘要、排行榜和 entitlement 缓存，即使远端撤销失败；下一次联网不得用已退出的旧 Token 静默恢复。
+- 离线、超时和 503 不等于会话失效。客户端可以保留登录身份展示，但只有未超过 `entitlements.expiresAt` 的授权才能继续解除访客额度。
+- 任意认证接口返回 `SESSION_EXPIRED` 时，客户端必须 fail closed：清除凭据和私有缓存，进入登录过期状态，并恢复访客新增规则。
+- 上游若支持管理员封禁、套餐到期或风控撤销，必须让 `/auth/refresh` 或 `/account/entitlements` 在规定传播时间内反映结果。
 
 ## 4. 今日摘要（悬浮面板必需）
 
@@ -175,7 +204,7 @@ Access Token 使用 `Authorization: Bearer <token>`。Access Token、Refresh Tok
 - `POST /gateway-keys`：创建 `model:invoke` 范围的设备专用 Key，明文 secret 只返回一次。
 - `DELETE /gateway-keys/{id}`：按设备撤销并返回 204。
 
-Rust 收到 secret 后直接写入 Windows Credential Manager，不经 Tauri IPC 返回 React。Codex 通过 `auth.command`、Claude Code 通过 `apiKeyHelper` 调用本地凭据助手。
+Rust 收到 secret 后直接写入 Windows Credential Manager 或 macOS Keychain，不经 Tauri IPC 返回 React。Codex 通过 `auth.command`、Claude Code 通过 `apiKeyHelper` 调用本地凭据助手。
 
 ## 7. 上游验收 fixtures
 
@@ -184,7 +213,9 @@ OpenAPI 3.1 附带的脱敏 fixtures 至少覆盖：
 - 摘要零用量；`total`、输入或输出大于 `9007199254740991`；余额 `available`、`unavailable`、`unlimited`；未知新增响应字段。
 - 排行榜空列表、单页、多页、末页、无个人排名、超大 Token、无效游标和 `limit` 边界。
 - 登录成功、凭据错误、challenge；刷新成功、Refresh Token 轮换和过期。
+- entitlement 为 `unlocked`、`guest-limited`、过期、套餐到期与服务端撤销；验证 Skills/MCP 各 3 的访客限制以及旧超额资料不裁剪。
+- 应用重启后使用 Refresh Token 恢复；本机退出后禁止旧 Token 静默恢复；离线时 entitlement 到期后回到访客新增规则。
 - 401 后凭据与缓存清理；403 禁止 stale；429 且带 `Retry-After`；503/超时下同日 5 分钟内 stale，以及超过 5 分钟和跨日拒绝 stale。
 - `period` 在 `Asia/Shanghai` 的日界线，以及夏令时地区 23/25 小时统计日。
 
-在 base URL、证书、challenge 流程、Token 生命周期、时区与 Token 公式、余额单位精度、排行榜同分/隐私规则、Codex/Claude 实际 endpoint 和网关 Key 生命周期全部确认后，桌面端才能启用正式 HTTP transport。
+在 base URL、证书、challenge 流程、Token 生命周期、会话撤销与离线语义、entitlement 生命周期、时区与 Token 公式、余额单位精度、排行榜同分/隐私规则、Codex/Claude 实际 endpoint 和网关 Key 生命周期全部确认后，桌面端才能启用正式 HTTP transport。

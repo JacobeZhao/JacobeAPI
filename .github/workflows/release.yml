@@ -4,12 +4,14 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release-windows:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +26,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -32,7 +34,100 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: JacobeAPI v__VERSION__
-          releaseBody: 自动发布的 JacobeAPI Windows 安装包与签名更新清单。
+          releaseBody: JacobeAPI Windows installer and signed updater metadata. The macOS DMG is appended after its independent build and verification completes.
           releaseDraft: false
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
+
+  release-macos:
+    needs: release-windows
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.release-windows.result == 'success') }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Validate Apple signing configuration
+        id: apple-signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          names=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+          configured=0
+          for name in "${names[@]}"; do
+            [[ -n "${!name:-}" ]] && configured=$((configured + 1))
+          done
+          if [[ "$configured" -eq 0 ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$configured" -ne "${#names[@]}" ]]; then
+            echo "::error::Apple signing secrets are incomplete. Configure all six values or remove all of them for an unsigned test build."
+            exit 1
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build unsigned Universal macOS app and DMG
+        if: github.event_name == 'workflow_dispatch' && steps.apple-signing.outputs.enabled == 'false'
+        run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg --no-sign
+      - name: Build signed and notarized Universal macOS app and DMG
+        if: github.event_name == 'workflow_dispatch' && steps.apple-signing.outputs.enabled == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
+      - name: Build and append Universal macOS release and updater metadata
+        if: github.event_name == 'push'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: v__VERSION__
+          releaseDraft: false
+          uploadUpdaterJson: true
+          args: --target universal-apple-darwin --bundles app,dmg
+      - name: Verify Universal macOS package
+        run: npm run verify:macos-package
+      - name: Archive app bundle
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          app="src-tauri/target/universal-apple-darwin/release/bundle/macos/JacobeAPI.app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "src-tauri/target/universal-apple-darwin/release/bundle/macos/JacobeAPI_${version}_universal.app.zip"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacobeapi-macos-universal
+          if-no-files-found: error
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*_universal.app.zip
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig

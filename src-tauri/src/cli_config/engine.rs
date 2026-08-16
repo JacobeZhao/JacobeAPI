@@ -155,7 +155,7 @@ impl ConfigEngine {
         let current = Zeroizing::new(current);
         if fingerprint(&current) != record.applied_fingerprint {
             return Err(ConfigError::new(
-                ConfigErrorCode::ConfigConflict,
+                ConfigErrorCode::ConcurrentModification,
                 "configuration changed after it was applied; restore was cancelled",
             ));
         }
@@ -196,7 +196,7 @@ impl ConfigEngine {
         now: u64,
     ) -> ConfigResult<ConfigPlanPreview> {
         let target = CliConfigTarget::Codex;
-        let path = self.paths.validate_target(target)?;
+        let path = self.paths.validate_target_for_preview(target)?;
         let (exists, source) = read_limited(path, MAX_CONFIG_BYTES)?;
         let source = Zeroizing::new(source);
         let merged = merge_codex(&source, &desired)?;
@@ -209,7 +209,7 @@ impl ConfigEngine {
         now: u64,
     ) -> ConfigResult<ConfigPlanPreview> {
         let target = CliConfigTarget::Claude;
-        let path = self.paths.validate_target(target)?;
+        let path = self.paths.validate_target_for_preview(target)?;
         let (exists, source) = read_limited(path, MAX_CONFIG_BYTES)?;
         let source = Zeroizing::new(source);
         let merged = merge_claude(&source, &desired)?;
@@ -282,14 +282,16 @@ impl ConfigEngine {
                 "configuration plan expired; create a new preview",
             ));
         }
-        let path = self.paths.validate_target(plan.preview.target)?;
+        let path = self
+            .paths
+            .validate_target_for_preview(plan.preview.target)?;
         let (current_exists, current) = read_limited(path, MAX_CONFIG_BYTES)?;
         let current = Zeroizing::new(current);
         if current_exists != plan.original_exists
             || fingerprint(&current) != plan.preview.original_fingerprint
         {
             return Err(ConfigError::new(
-                ConfigErrorCode::ConfigConflict,
+                ConfigErrorCode::ConcurrentModification,
                 "configuration changed after preview; apply was cancelled",
             ));
         }
@@ -304,6 +306,7 @@ impl ConfigEngine {
             &applied_fingerprint,
             now,
         )?;
+        let path = self.paths.prepare_target_parent(plan.preview.target)?;
         atomic_write(path, &plan.candidate)?;
         let write_verification = (|| {
             let (exists, written) = read_limited(path, MAX_CONFIG_BYTES)?;
@@ -411,7 +414,7 @@ impl ConfigEngine {
         identity: &NetapiConfigIdentity,
     ) -> CliConfigStatus {
         let path = CliConfigPaths::display_path(target);
-        let approved = match self.paths.validate_target(target) {
+        let approved = match self.paths.validate_target_for_preview(target) {
             Ok(path) => path,
             Err(_) => {
                 return CliConfigStatus {
@@ -540,6 +543,16 @@ mod tests {
         }
     }
 
+    fn claude_desired() -> ClaudeDesiredConfig {
+        ClaudeDesiredConfig {
+            base_url: "https://netapi.cc".into(),
+            api_key_helper: "jacobe-helper credential-helper claude netapi-demo".into(),
+            models: BTreeMap::from([("ANTHROPIC_MODEL".into(), "jacobe-demo-claude".into())]),
+            remove_plaintext_auth_token: true,
+            allow_replace_existing_values: true,
+        }
+    }
+
     #[test]
     fn plan_expires_without_writing() {
         let (temp, engine) = engine();
@@ -564,7 +577,7 @@ mod tests {
         let plan = engine.plan_codex_at(codex_desired(), 100).unwrap();
         fs::write(&path, "approval_policy = \"untrusted\"\n").unwrap();
         let error = engine.apply_at(&plan.plan_id, 101).unwrap_err();
-        assert_eq!(error.code, ConfigErrorCode::ConfigConflict);
+        assert_eq!(error.code, ConfigErrorCode::ConcurrentModification);
         assert!(fs::read_to_string(path).unwrap().contains("untrusted"));
     }
 
@@ -602,7 +615,10 @@ mod tests {
         let backups = engine.list_backups().unwrap();
         assert_eq!(backups.len(), 1);
         assert_eq!(backups[0].id, receipt.backup_id);
-        assert_eq!(backups[0].path, r"~\.claude\settings.json");
+        assert_eq!(
+            backups[0].path,
+            CliConfigPaths::display_path(CliConfigTarget::Claude)
+        );
         assert!(backups[0].created_at.ends_with('Z'));
 
         let statuses = engine.scan(&NetapiConfigIdentity {
@@ -621,5 +637,28 @@ mod tests {
 
         engine.restore(&receipt.backup_id).unwrap();
         assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+
+    #[test]
+    fn missing_claude_directory_is_created_only_when_plan_is_applied() {
+        let temp = TempDir::new().unwrap();
+        let paths = CliConfigPaths::discover(temp.path(), None, None).unwrap();
+        let engine =
+            ConfigEngine::new(paths, temp.path().join("backups"), Arc::new(TestProtector)).unwrap();
+        let claude_dir = temp.path().join(".claude");
+        let settings = claude_dir.join("settings.json");
+
+        let plan = engine.plan_claude_at(claude_desired(), 100).unwrap();
+        assert!(!claude_dir.exists());
+        assert!(!settings.exists());
+
+        let receipt = engine.apply_at(&plan.plan_id, 101).unwrap();
+        assert!(settings.is_file());
+        assert!(fs::read_to_string(&settings)
+            .unwrap()
+            .contains("jacobe-demo-claude"));
+
+        engine.restore(&receipt.backup_id).unwrap();
+        assert!(!settings.exists());
     }
 }

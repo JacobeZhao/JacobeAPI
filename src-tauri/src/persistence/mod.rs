@@ -13,8 +13,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     domain::{
-        default_library_state, latest_seed_pack_version, migrate_to_latest_seed_pack, LibraryState,
-        SeedPackMigration, MAX_SLOT_BYTES, SCHEMA_VERSION,
+        default_library_state, latest_seed_pack_version, migrate_to_latest_seed_pack,
+        LibraryAccess, LibraryState, SeedPackMigration, MAX_SLOT_BYTES, SCHEMA_VERSION,
+        SIGNED_OUT_LIMIT_PER_KIND,
     },
     error::{AppError, AppResult},
 };
@@ -101,7 +102,12 @@ impl LibraryStore {
         Ok(self.load_locked()?.state)
     }
 
-    pub fn commit(&self, base_revision: u64, candidate: LibraryState) -> AppResult<LibraryState> {
+    pub fn commit_with_access(
+        &self,
+        base_revision: u64,
+        candidate: LibraryState,
+        access: LibraryAccess,
+    ) -> AppResult<LibraryState> {
         let _guard = self.lock()?;
         let current = self.load_locked()?;
         if current.state.revision != base_revision {
@@ -110,6 +116,10 @@ impl LibraryStore {
             });
         }
         candidate.validate_candidate(base_revision)?;
+        if access == LibraryAccess::SignedOut {
+            enforce_signed_out_limit("skill", current.state.skills.len(), candidate.skills.len())?;
+            enforce_signed_out_limit("mcp", current.state.mcps.len(), candidate.mcps.len())?;
+        }
 
         let destination = current.active_slot.other();
         let slot = StoredSlot::from_state(candidate.clone())?;
@@ -137,6 +147,11 @@ impl LibraryStore {
             ));
         }
         Ok(candidate)
+    }
+
+    #[cfg(test)]
+    pub fn commit(&self, base_revision: u64, candidate: LibraryState) -> AppResult<LibraryState> {
+        self.commit_with_access(base_revision, candidate, LibraryAccess::SignedIn)
     }
 
     fn lock(&self) -> AppResult<MutexGuard<'_, ()>> {
@@ -373,6 +388,19 @@ impl LibraryStore {
     }
 }
 
+fn enforce_signed_out_limit(kind: &str, current: usize, candidate: usize) -> AppResult<()> {
+    let limit = current.max(SIGNED_OUT_LIMIT_PER_KIND);
+    if candidate > limit {
+        return Err(AppError::LimitExceeded {
+            kind: kind.into(),
+            limit,
+            current,
+            candidate,
+        });
+    }
+    Ok(())
+}
+
 impl StoredSlot {
     fn from_state(state: LibraryState) -> AppResult<Self> {
         state.validate()?;
@@ -492,5 +520,86 @@ mod tests {
 
         assert_eq!(store.load().unwrap(), full);
         assert!(!store.seed_pack_state_path().exists());
+    }
+
+    fn duplicate_skill(state: &LibraryState) -> crate::domain::Skill {
+        let mut skill = state.skills[0].clone();
+        skill.id = Uuid::new_v4().to_string();
+        skill.title = format!("Extra {}", &skill.id[..8]);
+        skill
+    }
+
+    #[test]
+    fn signed_out_limit_is_per_kind_and_checked_inside_commit() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LibraryStore::new(directory.path());
+        let initial = store.load().unwrap();
+        let mut third = initial.clone();
+        third.skills.push(duplicate_skill(&third));
+        third.revision += 1;
+        let third = store
+            .commit_with_access(initial.revision, third, LibraryAccess::SignedOut)
+            .unwrap();
+
+        let mut fourth = third.clone();
+        fourth.skills.push(duplicate_skill(&fourth));
+        fourth.revision += 1;
+        let error = store
+            .commit_with_access(third.revision, fourth, LibraryAccess::SignedOut)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::LimitExceeded {
+                kind,
+                limit: 3,
+                current: 3,
+                candidate: 4,
+            } if kind == "skill"
+        ));
+        assert_eq!(store.load().unwrap(), third);
+    }
+
+    #[test]
+    fn legacy_counts_are_grandfathered_but_cannot_grow_signed_out() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LibraryStore::new(directory.path());
+        let initial = store.load().unwrap();
+        let mut five = initial.clone();
+        while five.skills.len() < 5 {
+            five.skills.push(duplicate_skill(&five));
+        }
+        five.revision += 1;
+        let five = store
+            .commit_with_access(initial.revision, five, LibraryAccess::SignedIn)
+            .unwrap();
+
+        let mut edited = five.clone();
+        edited.skills[0].description = "edited while signed out".into();
+        edited.revision += 1;
+        let edited = store
+            .commit_with_access(five.revision, edited, LibraryAccess::SignedOut)
+            .unwrap();
+
+        let mut six = edited.clone();
+        six.skills.push(duplicate_skill(&six));
+        six.revision += 1;
+        assert!(matches!(
+            store.commit_with_access(edited.revision, six, LibraryAccess::SignedOut),
+            Err(AppError::LimitExceeded { limit: 5, .. })
+        ));
+
+        let mut four = edited.clone();
+        four.skills.pop();
+        four.revision += 1;
+        let four = store
+            .commit_with_access(edited.revision, four, LibraryAccess::SignedOut)
+            .unwrap();
+        let mut back_to_five = four.clone();
+        back_to_five.skills.push(duplicate_skill(&back_to_five));
+        back_to_five.revision += 1;
+        assert!(matches!(
+            store.commit_with_access(four.revision, back_to_five, LibraryAccess::SignedOut),
+            Err(AppError::LimitExceeded { limit: 4, .. })
+        ));
     }
 }

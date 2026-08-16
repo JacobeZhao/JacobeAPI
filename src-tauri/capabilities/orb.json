@@ -3,7 +3,7 @@
   "identifier": "orb",
   "description": "Minimal controls for the floating JacobeAPI launcher.",
   "windows": ["orb"],
-  "platforms": ["windows"],
+  "platforms": ["macOS", "windows"],
   "permissions": [
     "allow-begin-orb-drag",
     "allow-toggle-quick-panel",

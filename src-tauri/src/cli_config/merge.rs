@@ -86,7 +86,7 @@ pub(crate) fn merge_codex(
 
     if document.get("model_providers").is_some() && !document["model_providers"].is_table() {
         return Err(ConfigError::new(
-            ConfigErrorCode::ConfigConflict,
+            ConfigErrorCode::ExistingConfigConflict,
             "Codex model_providers setting is not a table",
         ));
     }
@@ -99,7 +99,7 @@ pub(crate) fn merge_codex(
         existing_provider.is_some() && !provider_matches(existing_provider, desired);
     if replaces_provider && !desired.allow_replace_existing_provider {
         return Err(ConfigError::new(
-            ConfigErrorCode::ConfigConflict,
+            ConfigErrorCode::ExistingConfigConflict,
             "the Codex provider id is already managed by another configuration",
         ));
     }
@@ -258,7 +258,7 @@ pub(crate) fn merge_claude(
         .as_object_mut()
         .ok_or_else(|| {
             ConfigError::new(
-                ConfigErrorCode::ConfigConflict,
+                ConfigErrorCode::ExistingConfigConflict,
                 "Claude env setting is not an object",
             )
         })?;
@@ -292,7 +292,7 @@ pub(crate) fn merge_claude(
         }
     } else if env.contains_key("ANTHROPIC_AUTH_TOKEN") {
         return Err(ConfigError::new(
-            ConfigErrorCode::ConfigConflict,
+            ConfigErrorCode::ExistingConfigConflict,
             "Claude contains a plaintext auth token that must be explicitly removed",
         ));
     }
@@ -593,7 +593,7 @@ fn ensure_json_compatible(existing: Option<&JsonValue>, desired: &str) -> Config
         Ok(())
     } else {
         Err(ConfigError::new(
-            ConfigErrorCode::ConfigConflict,
+            ConfigErrorCode::ExistingConfigConflict,
             "Claude already contains a conflicting managed value",
         ))
     }
@@ -643,14 +643,17 @@ fn validate_base_url(value: &str) -> ConfigResult<()> {
 }
 
 fn validate_helper_command(value: &str) -> ConfigResult<()> {
-    if value.trim().is_empty()
+    let path = std::path::Path::new(value);
+    let invalid = value.trim().is_empty()
         || value.len() > 512
         || value.chars().any(char::is_control)
-        || !value.to_ascii_lowercase().ends_with(".exe")
-    {
+        || !path.is_absolute();
+    #[cfg(windows)]
+    let invalid = invalid || !value.to_ascii_lowercase().ends_with(".exe");
+    if invalid {
         return Err(ConfigError::new(
             ConfigErrorCode::InvalidInput,
-            "Codex auth helper command must be a Windows executable path",
+            "Codex auth helper command must be an absolute executable path",
         ));
     }
     Ok(())
@@ -727,7 +730,7 @@ requires_openai_auth = true
 
     #[test]
     fn claude_merge_redacts_and_removes_plaintext_token() {
-        let source = br#"{"theme":"dark","env":{"ANTHROPIC_AUTH_TOKEN":"canary-secret"}}"#;
+        let source = br#"{"theme":"dark","custom":{"keep":true},"env":{"ANTHROPIC_AUTH_TOKEN":"canary-secret","ANTHROPIC_BASE_URL":"https://old.example","ANTHROPIC_MODEL":"old-model","ANTHROPIC_DEFAULT_SONNET_MODEL":"keep-alias"}}"#;
         let result = merge_claude(
             source,
             &ClaudeDesiredConfig {
@@ -735,12 +738,16 @@ requires_openai_auth = true
                 api_key_helper: r#""C:\Program Files\Jacobe\helper.exe" netapi"#.into(),
                 models: BTreeMap::from([("ANTHROPIC_MODEL".into(), "model-a".into())]),
                 remove_plaintext_auth_token: true,
-                allow_replace_existing_values: false,
+                allow_replace_existing_values: true,
             },
         )
         .unwrap();
         let output = String::from_utf8(result.bytes).unwrap();
         assert!(output.contains("\"theme\": \"dark\""));
+        assert!(output.contains("\"keep\": true"));
+        assert!(output.contains("keep-alias"));
+        assert!(output.contains("https://api.example"));
+        assert!(output.contains("model-a"));
         assert!(!output.contains("canary-secret"));
         let preview = serde_json::to_string(&result.changes).unwrap();
         assert!(!preview.contains("canary-secret"));
@@ -756,5 +763,32 @@ requires_openai_auth = true
         ] {
             assert!(validate_base_url(value).is_err());
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn accepts_an_absolute_unix_helper_without_an_exe_suffix() {
+        assert!(validate_helper_command(
+            "/Applications/JacobeAPI.app/Contents/MacOS/jacobe-skills"
+        )
+        .is_ok());
+        assert!(validate_helper_command("jacobe-skills").is_err());
+    }
+
+    #[test]
+    fn claude_incompatible_env_structure_has_stable_error() {
+        let error = merge_claude(
+            br#"{"env":"not-an-object"}"#,
+            &ClaudeDesiredConfig {
+                base_url: "https://netapi.cc".into(),
+                api_key_helper: "jacobe-helper claude netapi-demo".into(),
+                models: BTreeMap::from([("ANTHROPIC_MODEL".into(), "jacobe-demo-claude".into())]),
+                remove_plaintext_auth_token: true,
+                allow_replace_existing_values: true,
+            },
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code, ConfigErrorCode::ExistingConfigConflict);
     }
 }

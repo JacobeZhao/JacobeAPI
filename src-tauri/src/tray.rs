@@ -65,7 +65,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             SHOW_MANAGER_ID => {
-                let _ = windows::show_manager(app);
+                let _ = windows::show_manager_home(app);
             }
             TOGGLE_ORB_ID => {
                 let requested = orb_item.is_checked().unwrap_or(true);

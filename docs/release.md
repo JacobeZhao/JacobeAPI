@@ -13,14 +13,14 @@
 
 私钥不得提交到 Git。丢失私钥后，已安装客户端无法验证后续更新。
 
-发布新版本时，同时更新 `package.json`、`public/manifest.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本号，提交后创建并推送标签：
+发布桌面新版本时，同时更新 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json` 的版本号。只有 Chrome 扩展行为或产物发生变化时才更新 `public/manifest.json`。提交后创建并推送标签：
 
 ```powershell
-git tag v0.1.2
+git tag v0.1.3
 git push origin main --tags
 ```
 
-GitHub Actions 会运行检查、构建签名 NSIS 安装包、创建 Release，并上传 `latest.json`。客户端启动时静默检查；用户也可在“数据与备份 > 应用更新”中手动检查和安装。
+GitHub Actions 会运行检查、构建签名 NSIS 安装包、创建 Release，并上传 Windows updater 元数据；随后构建 Universal macOS DMG 和签名 updater 包，并把 macOS 条目合并到同一个 `latest.json`。手动运行 workflow 只生成可下载的 macOS 测试 artifact。客户端启动时静默检查；用户也可在“数据与备份 > 应用更新”中手动检查和安装。
 
 不要手工编辑 `latest.json` 或替换 Release 中的签名文件。
 

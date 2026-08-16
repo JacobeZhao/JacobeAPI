@@ -3,7 +3,7 @@
   "identifier": "quick",
   "description": "Read, copy and explicitly export cards from the quick panel.",
   "windows": ["quick"],
-  "platforms": ["windows"],
+  "platforms": ["macOS", "windows"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",

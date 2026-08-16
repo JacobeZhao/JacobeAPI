@@ -89,6 +89,26 @@ impl NetApiTransport for MockNetApiTransport {
         })
     }
 
+    fn restore_session(
+        &self,
+        access_token: &SecretString,
+    ) -> Result<AccountSessionView, NetApiError> {
+        let expected_user_id = Self::user_id(MOCK_ACCOUNT_IDENTIFIER);
+        if Self::user_id_from_token(access_token)? != expected_user_id {
+            return Err(NetApiError::Unauthorized);
+        }
+        Ok(AccountSessionView {
+            status: SessionStatus::SignedIn,
+            user: Some(AccountUser {
+                id: expected_user_id,
+                display_name: "demo".into(),
+                email: Some(MOCK_ACCOUNT_IDENTIFIER.into()),
+            }),
+            expires_at: Some(EXPIRES_AT.into()),
+            source: DataSource::Mock,
+        })
+    }
+
     fn get_summary(
         &self,
         access_token: &SecretString,

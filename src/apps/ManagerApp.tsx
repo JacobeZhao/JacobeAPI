@@ -3,6 +3,7 @@ import {
   BookOpen,
   ChevronDown,
   Database,
+  House,
   Menu,
   Plus,
   Search,
@@ -17,12 +18,15 @@ import brandMark from "../desktop/assets/brand-mark.svg?url";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Drawer } from "../components/Drawer";
 import { IconButton } from "../components/IconButton";
+import { SignInPromptDialog } from "../components/SignInPromptDialog";
 import { ToastRegion, type ToastMessage } from "../components/ToastRegion";
 import { LIBRARY_LIMITS } from "../domain/limits";
 import type { CardEntity, ImportStrategy, LibraryMutation, LibraryState, LibraryView, Skill, SortMode } from "../domain/types";
 import { CardGrid } from "../features/library/CardGrid";
 import { EntityEditor } from "../features/library/EntityEditor";
 import { AccountPage } from "../features/account/AccountPage";
+import { useAccountSession } from "../features/account/useAccountSession";
+import { HomePage } from "../features/home/HomePage";
 import { DataSettings, type ImportPreviewView } from "../features/settings/DataSettings";
 import type { AppUpdateInfo, DesktopPreferences } from "../platform/contracts";
 import { usePlatform } from "../platform/PlatformProvider";
@@ -30,9 +34,17 @@ import { serializeSkillMarkdown } from "../services/download";
 import { safeFilename } from "../services/filename";
 import { prepareLibraryImport, parseLibraryImport, serializeLibraryExport } from "../services/importExport";
 import { buildMcpConfig } from "../services/mcpConfig";
+import {
+  decideCreateAccess,
+  decideImportAccess,
+  decideUpsertAccess,
+  isDesktopGuest,
+  isLimitExceededError,
+  platformErrorMessage,
+} from "../services/libraryAccess";
 import { filterCards, getAllTags } from "../services/search";
 
-type ManagerPage = LibraryView | "account" | "settings";
+type ManagerPage = LibraryView | "home" | "account" | "settings";
 
 interface PendingImport {
   raw: string;
@@ -41,7 +53,7 @@ interface PendingImport {
 }
 
 function messageFromError(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback;
+  return platformErrorMessage(error, fallback);
 }
 
 function cardMutation(card: CardEntity): LibraryMutation {
@@ -59,8 +71,9 @@ function NavButton({ active, icon, label, count, onClick }: { active: boolean; i
 export function ManagerApp() {
   const platform = usePlatform();
   const libraryGateway = platform.library;
+  const accountSession = useAccountSession(platform.account);
   const [library, setLibrary] = useState<LibraryState | null>(null);
-  const [page, setPage] = useState<ManagerPage>("skills");
+  const [page, setPage] = useState<ManagerPage>(() => platform.kind === "desktop" ? "home" : "skills");
   const [query, setQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [drawer, setDrawer] = useState<{ kind: CardEntity["kind"]; entity?: CardEntity } | null>(null);
@@ -78,7 +91,13 @@ export function ManagerApp() {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
+  const [signInPrompt, setSignInPrompt] = useState<{ title: string; description: string } | null>(null);
   const libraryRef = useRef<LibraryState | null>(null);
+  const accessContext = useMemo(() => ({
+    platformKind: platform.kind,
+    accountAvailable: Boolean(platform.account),
+    sessionState: accountSession.state,
+  }), [accountSession.state, platform.account, platform.kind]);
 
   const syncLibrary = useCallback((state: LibraryState) => {
     libraryRef.current = state;
@@ -96,11 +115,11 @@ export function ManagerApp() {
     try {
       const state = await libraryGateway.getLibrary();
       syncLibrary(state);
-      setPage(state.preferences.managerView);
+      if (platform.kind !== "desktop") setPage(state.preferences.managerView);
     } catch (error) {
       setLoadingError(messageFromError(error, "资料库暂时无法打开，请重试。"));
     }
-  }, [libraryGateway, syncLibrary]);
+  }, [libraryGateway, platform.kind, syncLibrary]);
 
   useEffect(() => {
     let active = true;
@@ -108,7 +127,7 @@ export function ManagerApp() {
       .then((state) => {
         if (!active) return;
         syncLibrary(state);
-        setPage(state.preferences.managerView);
+        if (platform.kind !== "desktop") setPage(state.preferences.managerView);
       })
       .catch((error: unknown) => {
         if (active) setLoadingError(messageFromError(error, "资料库暂时无法打开，请重试。"));
@@ -120,7 +139,7 @@ export function ManagerApp() {
       active = false;
       unsubscribe();
     };
-  }, [libraryGateway, syncLibrary]);
+  }, [libraryGateway, platform.kind, syncLibrary]);
 
   useEffect(() => {
     if (!platform.getDesktopPreferences) return;
@@ -145,7 +164,7 @@ export function ManagerApp() {
     if (!platform.subscribeManagerDestination) return;
     return platform.subscribeManagerDestination((destination) => {
       if (destination === "account") setPage("account");
-      else setPage(libraryRef.current?.preferences.managerView ?? "skills");
+      else setPage(platform.kind === "desktop" ? "home" : libraryRef.current?.preferences.managerView ?? "skills");
       setMobileNavOpen(false);
     });
   }, [platform]);
@@ -158,10 +177,14 @@ export function ManagerApp() {
       syncLibrary(next);
       return next;
     } catch (error) {
-      pushToast({ tone: "error", message: messageFromError(error, "保存失败，请重试。") });
+      if (isLimitExceededError(error) && isDesktopGuest(accessContext)) {
+        setSignInPrompt({ title: "登录后继续", description: messageFromError(error, "未登录额度已用完，登录或注册后可继续。") });
+      } else {
+        pushToast({ tone: "error", message: messageFromError(error, "保存失败，请重试。") });
+      }
       throw error;
     }
-  }, [libraryGateway, pushToast, syncLibrary]);
+  }, [accessContext, libraryGateway, pushToast, syncLibrary]);
 
   const cards = useMemo<CardEntity[]>(
     () => page === "mcps" ? library?.mcps ?? [] : library?.skills ?? [],
@@ -195,9 +218,33 @@ export function ManagerApp() {
   };
 
   const saveEntity = async (entity: CardEntity) => {
-    await commit(cardMutation(entity));
-    setDrawer(null);
-    pushToast({ message: entity.kind === "skill" ? "Skill 已保存" : "MCP 工具已保存" });
+    const current = libraryRef.current;
+    if (current) {
+      const decision = decideUpsertAccess(accessContext, current, entity);
+      if (!decision.allowed) {
+        setSignInPrompt({ title: "登录后继续添加", description: decision.reason ?? "登录后可继续添加。" });
+        return;
+      }
+    }
+    try {
+      await commit(cardMutation(entity));
+      setDrawer(null);
+      pushToast({ message: entity.kind === "skill" ? "Skill 已保存" : "MCP 工具已保存" });
+    } catch {
+      // commit owns the error feedback; keeping the drawer open preserves the user's input.
+    }
+  };
+
+  const requestCreate = (kind: CardEntity["kind"]) => {
+    const current = libraryRef.current;
+    if (current) {
+      const decision = decideCreateAccess(accessContext, current, kind);
+      if (!decision.allowed) {
+        setSignInPrompt({ title: "登录后继续添加", description: decision.reason ?? "登录后可继续添加。" });
+        return;
+      }
+    }
+    setDrawer({ kind });
   };
 
   const toggleFavorite = (card: CardEntity) => {
@@ -332,19 +379,45 @@ export function ManagerApp() {
     setImporting(true);
     try {
       const preview = prepareLibraryImport(pendingImport.raw, library, strategy);
+      const access = decideImportAccess(accessContext, library, preview.candidate);
+      if (!access.allowed) {
+        const description = access.reason ?? "登录后可继续导入。";
+        setImportError(description);
+        setSignInPrompt({ title: "登录后继续导入", description });
+        return;
+      }
       await commit({ type: "import-state", state: preview.candidate });
       setPendingImport(null);
       setConfirmReplaceImport(false);
       setImportError("");
       pushToast({ message: "备份已导入" });
     } catch (error) {
-      setImportError(messageFromError(error, "导入失败，当前资料没有改变。"));
+      const message = messageFromError(error, "导入失败，当前资料没有改变。");
+      setImportError(message);
+      if (isLimitExceededError(error) && isDesktopGuest(accessContext)) {
+        setSignInPrompt({ title: "登录后继续导入", description: message });
+      }
     } finally {
       setImporting(false);
     }
   };
 
   const requestImport = () => {
+    if (pendingImport && library) {
+      try {
+        const preview = prepareLibraryImport(pendingImport.raw, library, strategy);
+        const access = decideImportAccess(accessContext, library, preview.candidate);
+        if (!access.allowed) {
+          const description = access.reason ?? "登录后可继续导入。";
+          setImportError(description);
+          setSignInPrompt({ title: "登录后继续导入", description });
+          return;
+        }
+      } catch (error) {
+        setImportError(messageFromError(error, "无法检查导入额度。"));
+        return;
+      }
+    }
     if (strategy === "replace") setConfirmReplaceImport(true);
     else void confirmImport();
   };
@@ -364,6 +437,7 @@ export function ManagerApp() {
       <aside className={`sidebar ${mobileNavOpen ? "sidebar--open" : ""}`} aria-label="主导航">
         <div className="brand"><img src={brandMark} alt="" /><div><strong>JacobeAPI</strong><span>AI Skills &amp; MCP</span></div></div>
         <nav>
+          {platform.kind === "desktop" ? <NavButton active={page === "home"} icon={<House size={19} />} label="首页" onClick={() => switchPage("home")} /> : null}
           <span className="nav-label">资料库</span>
           <NavButton active={page === "skills"} icon={<BookOpen size={19} />} label="Skills" count={library?.skills.length} onClick={() => switchPage("skills")} />
           <NavButton active={page === "mcps"} icon={<Server size={19} />} label="MCP 工具" count={library?.mcps.length} onClick={() => switchPage("mcps")} />
@@ -371,7 +445,9 @@ export function ManagerApp() {
           {platform.account ? <NavButton active={page === "account"} icon={<UserRound size={19} />} label="账户与用量" onClick={() => switchPage("account")} /> : null}
           <NavButton active={page === "settings"} icon={<Database size={19} />} label="数据与备份" onClick={() => switchPage("settings")} />
         </nav>
-        <div className="sidebar-note"><span className="status-dot" />本地资料库<span>Skill 与 MCP 不上传</span></div>
+        {accountSession.state.status === "ready" && accountSession.state.session.status === "signedIn" ? (
+          <div className="sidebar-user"><UserRound size={18} aria-hidden="true" /><strong>{accountSession.state.session.user.displayName}</strong><span>{accountSession.state.session.source === "mock" ? "模拟账户 · 已登录" : "已登录"}</span></div>
+        ) : <div className="sidebar-note"><span className="status-dot" />本地资料库<span>Skill 与 MCP 不上传</span></div>}
       </aside>
 
       {mobileNavOpen ? <button type="button" className="sidebar-scrim" aria-label="关闭导航" onClick={() => setMobileNavOpen(false)} /> : null}
@@ -382,8 +458,10 @@ export function ManagerApp() {
           <span>JacobeAPI</span>
         </div>
 
-        {page === "account" ? (
-          <AccountPage platform={platform} onNotify={(message, tone) => pushToast({ message, tone })} />
+        {page === "home" && platform.kind === "desktop" ? (
+          <HomePage skillCount={library?.skills.length ?? 0} mcpCount={library?.mcps.length ?? 0} sessionState={accountSession.state} onAccount={() => switchPage("account")} onRetrySession={() => void accountSession.retry()} />
+        ) : page === "account" ? (
+          <AccountPage platform={platform} sessionState={accountSession.state} onSessionChange={accountSession.acceptSession} onNotify={(message, tone) => pushToast({ message, tone })} />
         ) : page === "settings" && library ? (
           <DataSettings
             skillCount={library.skills.length}
@@ -400,7 +478,7 @@ export function ManagerApp() {
             updateProgress={updateProgress}
             onExport={() => void exportLibrary()}
             onChooseFile={() => void inspectImport()}
-            onStrategy={setStrategy}
+            onStrategy={(nextStrategy) => { setStrategy(nextStrategy); setImportError(""); }}
             onConfirmImport={requestImport}
             onCancelPreview={() => { setPendingImport(null); setImportError(""); }}
             onAutostart={(enabled) => void updateDesktopPreference(platform.setAutostart, enabled, "开机启动设置失败。")}
@@ -413,7 +491,7 @@ export function ManagerApp() {
           <div className="library-layout">
             <header className="page-header">
               <div><span className="eyebrow">个人资料库</span><h1>{page === "skills" ? "我的 Skills" : "MCP 工具"}</h1><p>{page === "skills" ? "随手整理好提示词，需要时一键取用。" : "集中保存 MCP 启动参数，复制配置更省心。"}</p></div>
-              <button type="button" className="button button--primary button--create" onClick={() => setDrawer({ kind: page === "mcps" ? "mcp" : "skill" })}><Plus size={18} />新建{page === "mcps" ? " MCP" : " Skill"}</button>
+              <button type="button" className="button button--primary button--create" onClick={() => requestCreate(page === "mcps" ? "mcp" : "skill")}><Plus size={18} />新建{page === "mcps" ? " MCP" : " Skill"}</button>
             </header>
 
             <section className="library-toolbar" aria-label="搜索和筛选">
@@ -435,7 +513,7 @@ export function ManagerApp() {
                 <div>{query || selectedTags.length ? <Search size={25} /> : <Sparkles size={25} />}</div>
                 <h2>{query || selectedTags.length ? "没有找到匹配内容" : `还没有 ${page === "skills" ? "Skill" : "MCP 工具"}`}</h2>
                 <p>{query || selectedTags.length ? "换个关键词，或者清除标签筛选后再试。" : page === "skills" ? "把第一条常用提示词收进来，下次就不用到处翻找。" : "保存常用服务器配置，需要时直接复制。"}</p>
-                {query || selectedTags.length ? <button type="button" className="button button--secondary" onClick={() => { setQuery(""); setSelectedTags([]); }}>清除筛选</button> : <button type="button" className="button button--primary" onClick={() => setDrawer({ kind: page === "mcps" ? "mcp" : "skill" })}><Plus size={17} />立即新建</button>}
+                {query || selectedTags.length ? <button type="button" className="button button--secondary" onClick={() => { setQuery(""); setSelectedTags([]); }}>清除筛选</button> : <button type="button" className="button button--primary" onClick={() => requestCreate(page === "mcps" ? "mcp" : "skill")}><Plus size={17} />立即新建</button>}
               </section>
             )}
           </div>
@@ -447,6 +525,7 @@ export function ManagerApp() {
       </Drawer>
       <ConfirmDialog open={Boolean(pendingDelete)} title={`删除“${pendingDelete?.title ?? ""}”？`} description="删除后可在通知消失前撤销。" onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
       <ConfirmDialog open={confirmReplaceImport} title="替换整个资料库？" description="当前所有 Skill 和 MCP 工具都会被备份中的内容替换。请确认已经导出当前资料。" confirmLabel="确认替换" onCancel={() => setConfirmReplaceImport(false)} onConfirm={() => void confirmImport()} />
+      <SignInPromptDialog open={Boolean(signInPrompt)} title={signInPrompt?.title} description={signInPrompt?.description ?? "登录后可继续。"} onCancel={() => setSignInPrompt(null)} onContinue={() => { setSignInPrompt(null); switchPage("account"); }} />
       <ToastRegion toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
     </div>
   );

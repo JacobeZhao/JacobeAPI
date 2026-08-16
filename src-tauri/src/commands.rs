@@ -17,7 +17,7 @@ use crate::{
         NetapiConfigIdentity,
     },
     domain::LibraryState,
-    error::CommandError,
+    error::{CommandError, ErrorCode},
     state::AppState,
     windows,
 };
@@ -89,24 +89,33 @@ pub fn commit_library(
     base_revision: u64,
     candidate: LibraryState,
 ) -> Result<LibraryState, CommandError> {
+    let access = state.account.library_access().map_err(|_| CommandError {
+        code: ErrorCode::Unknown,
+        message: "账户状态暂时不可用，请重启应用。".into(),
+        state: None,
+        details: None,
+    })?;
     let committed = state
         .library
-        .commit(base_revision, candidate)
+        .commit_with_access(base_revision, candidate, access.access())
         .map_err(CommandError::from)?;
+    drop(access);
     let _ = app.emit("library-updated", &committed);
     Ok(committed)
 }
 
 #[tauri::command]
 pub fn show_manager(app: AppHandle, destination: Option<String>) -> Result<(), String> {
-    windows::show_manager(&app)?;
-    if let Some(destination) = destination {
-        if !matches!(destination.as_str(), "library" | "account") {
-            return Err("unknown manager destination".into());
-        }
-        app.emit_to(windows::MANAGER_LABEL, "manager-navigate", destination)
-            .map_err(|error| error.to_string())?;
+    let destination = destination.unwrap_or_else(|| "library".into());
+    if !matches!(destination.as_str(), "library" | "account") {
+        return Err("unknown manager destination".into());
     }
+    if destination == "library" {
+        return windows::show_manager_home(&app);
+    }
+    windows::show_manager(&app)?;
+    app.emit_to(windows::MANAGER_LABEL, "manager-navigate", destination)
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -225,6 +234,10 @@ fn cli_config_error(error: ConfigError) -> String {
         ConfigErrorCode::ConfigMissing => "没有找到对应的配置文件。".into(),
         ConfigErrorCode::ConfigInvalid => "现有配置无法解析，不会覆盖该文件。".into(),
         ConfigErrorCode::ConfigConflict => "配置已被其他程序修改，请重新生成预览。".into(),
+        ConfigErrorCode::ExistingConfigConflict => {
+            "现有配置结构与 JacobeAPI 不兼容，未进行任何修改。".into()
+        }
+        ConfigErrorCode::ConcurrentModification => "配置在预览后发生变化，请重新生成预览。".into(),
         ConfigErrorCode::PlanMissing | ConfigErrorCode::PlanExpired => {
             "配置预览已失效，请重新生成。".into()
         }
@@ -232,6 +245,40 @@ fn cli_config_error(error: ConfigError) -> String {
         ConfigErrorCode::ProtectionFailed => "Windows 无法保护或读取配置备份。".into(),
         ConfigErrorCode::Io => "配置文件操作失败，原配置已尽可能保持不变。".into(),
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliCommandError {
+    code: &'static str,
+    message: String,
+}
+
+impl CliCommandError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+fn structured_cli_config_error(error: ConfigError) -> CliCommandError {
+    let code = match error.code {
+        ConfigErrorCode::ExistingConfigConflict => "EXISTING_CONFIG_CONFLICT",
+        ConfigErrorCode::ConcurrentModification => "CONFIG_CHANGED",
+        ConfigErrorCode::ConfigConflict => "CONFIG_CONFLICT",
+        ConfigErrorCode::InvalidInput => "INVALID_INPUT",
+        ConfigErrorCode::UnsupportedPath | ConfigErrorCode::UnsafePath => "UNSAFE_PATH",
+        ConfigErrorCode::ConfigMissing => "CONFIG_MISSING",
+        ConfigErrorCode::ConfigInvalid => "CONFIG_INVALID",
+        ConfigErrorCode::PlanMissing => "PLAN_MISSING",
+        ConfigErrorCode::PlanExpired => "PLAN_EXPIRED",
+        ConfigErrorCode::BackupInvalid => "BACKUP_INVALID",
+        ConfigErrorCode::ProtectionFailed => "PROTECTION_FAILED",
+        ConfigErrorCode::Io => "IO_ERROR",
+    };
+    CliCommandError::new(code, cli_config_error(error))
 }
 
 fn cli_engine(state: &AppState) -> Result<&crate::cli_config::ConfigEngine, String> {
@@ -244,7 +291,7 @@ fn cli_engine(state: &AppState) -> Result<&crate::cli_config::ConfigEngine, Stri
 fn netapi_config_identity() -> NetapiConfigIdentity {
     let helper = std::env::current_exe()
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "jacobe-skills.exe".into());
+        .unwrap_or_else(|_| fallback_helper_name().into());
     NetapiConfigIdentity {
         base_url: "https://netapi.cc".into(),
         codex_provider_id: "netapi-demo".into(),
@@ -254,8 +301,32 @@ fn netapi_config_identity() -> NetapiConfigIdentity {
             "codex".into(),
             "netapi-demo".into(),
         ],
-        claude_api_key_helper: format!("\"{helper}\" credential-helper claude netapi-demo"),
+        claude_api_key_helper: format!(
+            "{} credential-helper claude netapi-demo",
+            quote_helper_for_shell(&helper)
+        ),
     }
+}
+
+#[cfg(windows)]
+fn fallback_helper_name() -> &'static str {
+    "jacobe-skills.exe"
+}
+
+#[cfg(not(windows))]
+fn fallback_helper_name() -> &'static str {
+    "jacobe-skills"
+}
+
+#[cfg(windows)]
+fn quote_helper_for_shell(value: &str) -> String {
+    // Double quotes cannot occur in a valid Windows path.
+    format!("\"{value}\"")
+}
+
+#[cfg(not(windows))]
+fn quote_helper_for_shell(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn require_demo_mock_session(session: &AccountSessionView) -> Result<(), String> {
@@ -289,10 +360,15 @@ pub fn scan_cli_configs(state: State<'_, AppState>) -> Result<Vec<CliConfigStatu
 pub fn preview_cli_config(
     state: State<'_, AppState>,
     target: CliConfigTarget,
-) -> Result<ConfigPlanPreview, String> {
-    let session = state.account.get_session().map_err(account_error)?;
-    require_demo_mock_session(&session)?;
-    let engine = cli_engine(&state)?;
+) -> Result<ConfigPlanPreview, CliCommandError> {
+    let session = state
+        .account
+        .get_session()
+        .map_err(|error| CliCommandError::new("ACCOUNT_UNAVAILABLE", account_error(error)))?;
+    require_demo_mock_session(&session)
+        .map_err(|message| CliCommandError::new("DEMO_LOGIN_REQUIRED", message))?;
+    let engine = cli_engine(&state)
+        .map_err(|message| CliCommandError::new("CONFIG_UNAVAILABLE", message))?;
     let identity = netapi_config_identity();
     let mut preview = match target {
         CliConfigTarget::Codex => engine.plan_codex(CodexDesiredConfig {
@@ -310,10 +386,10 @@ pub fn preview_cli_config(
             api_key_helper: identity.claude_api_key_helper,
             models: BTreeMap::from([("ANTHROPIC_MODEL".into(), "jacobe-demo-claude".into())]),
             remove_plaintext_auth_token: true,
-            allow_replace_existing_values: false,
+            allow_replace_existing_values: true,
         }),
     }
-    .map_err(cli_config_error)?;
+    .map_err(structured_cli_config_error)?;
     add_demo_warning(&mut preview);
     Ok(preview)
 }
@@ -323,12 +399,17 @@ pub fn apply_cli_config(
     app: AppHandle,
     state: State<'_, AppState>,
     plan_id: String,
-) -> Result<ConfigApplyReceipt, String> {
-    let session = state.account.get_session().map_err(account_error)?;
-    require_demo_mock_session(&session)?;
-    let result = cli_engine(&state)?
+) -> Result<ConfigApplyReceipt, CliCommandError> {
+    let session = state
+        .account
+        .get_session()
+        .map_err(|error| CliCommandError::new("ACCOUNT_UNAVAILABLE", account_error(error)))?;
+    require_demo_mock_session(&session)
+        .map_err(|message| CliCommandError::new("DEMO_LOGIN_REQUIRED", message))?;
+    let result = cli_engine(&state)
+        .map_err(|message| CliCommandError::new("CONFIG_UNAVAILABLE", message))?
         .apply(&plan_id)
-        .map_err(cli_config_error)?;
+        .map_err(structured_cli_config_error)?;
     let _ = app.emit(
         "cli-config-updated",
         serde_json::json!({ "kind": "applied", "result": &result }),
@@ -610,5 +691,23 @@ mod tests {
             _ => panic!("expected demo credential"),
         };
         assert!(!serialized.contains(credential.expose_for_stdout()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn claude_helper_quotes_windows_paths_with_spaces() {
+        assert_eq!(
+            quote_helper_for_shell(r"C:\Program Files\JacobeAPI\jacobe-skills.exe"),
+            r#""C:\Program Files\JacobeAPI\jacobe-skills.exe""#
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn claude_helper_posix_quotes_shell_metacharacters() {
+        assert_eq!(
+            quote_helper_for_shell("/Applications/Jacobe's $API.app/Contents/MacOS/jacobe-skills"),
+            "'/Applications/Jacobe'\"'\"'s $API.app/Contents/MacOS/jacobe-skills'"
+        );
     }
 }

@@ -3,6 +3,8 @@ mod credential_helper;
 mod dpapi;
 mod engine;
 mod error;
+#[cfg(target_os = "macos")]
+mod keychain;
 mod merge;
 mod paths;
 
@@ -10,6 +12,8 @@ pub use credential_helper::{parse_credential_helper_args, CredentialHelperMode};
 pub use dpapi::DpapiBackupProtector;
 pub use engine::{BackupProtector, ConfigEngine};
 pub use error::{ConfigError, ConfigErrorCode, ConfigResult};
+#[cfg(target_os = "macos")]
+pub use keychain::MacOsBackupProtector;
 pub use merge::{ClaudeDesiredConfig, CodexDesiredConfig};
 pub use paths::CliConfigPaths;
 

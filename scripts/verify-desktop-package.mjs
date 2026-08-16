@@ -8,8 +8,6 @@ const REQUIRED_DESKTOP_ENTRIES = [
   "desktop-orb.html",
   "desktop-quick.html",
 ];
-const INSTALLER_NAME_PREFIX = "jacobeapi_";
-
 function parseArgs(argv) {
   const options = {
     distDir: resolve("dist-desktop"),
@@ -144,6 +142,11 @@ async function writeChecksums(outputDir, installers) {
 
 async function main() {
   const { distDir, bundleDir, binaryPath, outputDir } = parseArgs(process.argv.slice(2));
+  const packageMetadata = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+  if (typeof packageMetadata.version !== "string" || !/^\d+\.\d+\.\d+$/.test(packageMetadata.version)) {
+    throw new Error("package.json contains an invalid release version");
+  }
+  const expectedInstallerName = `jacobeapi_${packageMetadata.version}_x64-setup.exe`;
 
   for (const entry of REQUIRED_DESKTOP_ENTRIES) {
     await assertNonemptyFile(resolve(distDir, entry), `desktop entry ${entry}`);
@@ -164,7 +167,7 @@ async function main() {
   const installers = bundleEntries
     .filter((entry) => {
       const name = entry.name.toLowerCase();
-      return entry.isFile() && name.startsWith(INSTALLER_NAME_PREFIX) && name.endsWith(".exe");
+      return entry.isFile() && name === expectedInstallerName;
     })
     .map((entry) => resolve(bundleDir, entry.name))
     .sort((left, right) => left.localeCompare(right, "en"));
@@ -173,6 +176,7 @@ async function main() {
   }
   for (const installer of installers) {
     await assertGuiSubsystem(installer, "NSIS installer");
+    await assertNonemptyFile(`${installer}.sig`, "NSIS updater signature");
   }
   const binarySubsystem = await assertGuiSubsystem(binaryPath, "desktop release executable");
   await assertSelfContainedDesktopBinary(binaryPath);

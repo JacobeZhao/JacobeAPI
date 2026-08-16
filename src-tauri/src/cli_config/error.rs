@@ -12,6 +12,8 @@ pub enum ConfigErrorCode {
     ConfigMissing,
     ConfigInvalid,
     ConfigConflict,
+    ExistingConfigConflict,
+    ConcurrentModification,
     PlanMissing,
     PlanExpired,
     BackupInvalid,

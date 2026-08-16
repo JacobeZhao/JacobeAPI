@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.1.3 - 2026-08-16
+
+- 新增桌面首页与左侧栏账户摘要；Chrome 扩展继续直接使用独立的本地资料库。
+- 桌面访客的 Skill 与 MCP 各限 3 个，预置计入额度；旧版超额资料不会裁剪，登录后解除产品额度。
+- Demo 登录通过 Windows Credential Manager 或 macOS Keychain 在应用重启后恢复，退出或凭据损坏时安全回到未登录状态。
+- Claude Code 配置只替换受管字段，保留未知配置，并支持脱敏预览、加密备份、冲突检测和恢复。
+- 新增 Intel 与 Apple Silicon 通用的 macOS DMG 构建、Keychain 凭据保护和 GitHub Actions 产物验证。
+- 补充 netapi.cc 正式 entitlement、会话恢复、撤销和离线有效期 API 合同；正式账户仍需上游接口接入。
+
 ## 0.1.2
 
 - Demo 账户可以使用模拟密钥完整测试 Codex 与 Claude Code 的配置预览、备份、写入和恢复。

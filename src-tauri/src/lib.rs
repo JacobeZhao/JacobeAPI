@@ -70,7 +70,7 @@ pub fn run() -> tauri::Result<()> {
 
             let launched_at_startup = std::env::args().any(|arg| arg == "--autostart");
             if first_run && !launched_at_startup {
-                windows::show_manager(app.handle())?;
+                windows::show_manager_home(app.handle())?;
             }
             Ok(())
         })

@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react";
 import "./account.css";
 import type {
   AccountDataSource,
+  AccountSessionState,
   AccountSessionView,
   AccountSummarySnapshot,
   LeaderboardSnapshot,
@@ -30,9 +31,14 @@ import type {
 } from "../../domain/cliConfig";
 import type { PlatformServices } from "../../platform/contracts";
 
-interface AccountPageProps {
+interface AccountPageBaseProps {
   platform: PlatformServices;
   onNotify(message: string, tone?: "success" | "error"): void;
+}
+
+interface AccountPageProps extends AccountPageBaseProps {
+  sessionState: AccountSessionState;
+  onSessionChange(session: AccountSessionView): void;
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -95,7 +101,7 @@ function LoginPanel({ onLogin, onRegister, busy, error }: { onLogin(request: Log
   );
 }
 
-function ConfigPanel({ platform, onNotify, source }: AccountPageProps & { source: AccountDataSource }) {
+function ConfigPanel({ platform, onNotify, source }: AccountPageBaseProps & { source: AccountDataSource }) {
   const gateway = platform.cliConfig;
   const [statuses, setStatuses] = useState<CliConfigStatus[]>([]);
   const [preview, setPreview] = useState<CliConfigPreview | null>(null);
@@ -199,9 +205,8 @@ function ConfigPanel({ platform, onNotify, source }: AccountPageProps & { source
   );
 }
 
-export function AccountPage({ platform, onNotify }: AccountPageProps) {
+export function AccountPage({ platform, onNotify, sessionState, onSessionChange }: AccountPageProps) {
   const gateway = platform.account;
-  const [session, setSession] = useState<AccountSessionView | null>(null);
   const [summary, setSummary] = useState<AccountSummarySnapshot | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -230,39 +235,27 @@ export function AccountPage({ platform, onNotify }: AccountPageProps) {
     catch (reason) { setLeaderboardError(errorMessage(reason, "排行榜暂时不可用，请稍后重试。")); }
   }, [gateway]);
 
+  const session = sessionState.status === "ready" ? sessionState.session : null;
+  const signedInUserId = session?.status === "signedIn" ? session.user.id : null;
+
   useEffect(() => {
-    if (!gateway) return;
+    if (!gateway || !signedInUserId) return;
     let active = true;
-    void gateway.getSession().then((value) => {
-      if (!active) return;
-      setSession(value);
-      if (value.status === "signedIn") {
-        void gateway.getSummary(false).then((snapshot) => { if (active) setSummary(snapshot); }).catch((reason: unknown) => { if (active) setSummaryError(errorMessage(reason, "账户摘要暂时不可用，请稍后重试。")); });
-        void gateway.getLeaderboard({ limit: 50 }).then((snapshot) => { if (active) setLeaderboard(snapshot); }).catch((reason: unknown) => { if (active) setLeaderboardError(errorMessage(reason, "排行榜暂时不可用，请稍后重试。")); });
-      }
-    }).catch((reason) => { if (active) setError(errorMessage(reason, "无法读取登录状态。")); });
-    const stopSession = gateway.subscribeSession((value) => {
-      if (!active) return;
-      setSession(value);
-      if (value.status === "signedIn") {
-        void gateway.getSummary(false).then((snapshot) => { if (active) setSummary(snapshot); }).catch(() => undefined);
-        void gateway.getLeaderboard({ limit: 50 }).then((snapshot) => { if (active) setLeaderboard(snapshot); }).catch(() => undefined);
-      } else {
-        setSummary(null);
-        setLeaderboard(null);
-      }
-    });
+    void gateway.getSummary(false).then((snapshot) => { if (active) setSummary(snapshot); }).catch((reason: unknown) => { if (active) setSummaryError(errorMessage(reason, "账户摘要暂时不可用，请稍后重试。")); });
+    void gateway.getLeaderboard({ limit: 50 }).then((snapshot) => { if (active) setLeaderboard(snapshot); }).catch((reason: unknown) => { if (active) setLeaderboardError(errorMessage(reason, "排行榜暂时不可用，请稍后重试。")); });
     const stopSummary = gateway.subscribeSummary((value) => { if (active) setSummary(value); });
     const stopLeaderboard = gateway.subscribeLeaderboard((value) => { if (active) setLeaderboard(value); });
-    return () => { active = false; stopSession(); stopSummary(); stopLeaderboard(); };
-  }, [gateway]);
+    return () => { active = false; stopSummary(); stopLeaderboard(); };
+  }, [gateway, signedInUserId]);
 
   const login = async (request: LoginRequest) => {
     if (!gateway) return;
     setBusy(true); setError("");
     try {
-      setSession(await gateway.login(request));
-      await Promise.all([loadSummary(false), loadLeaderboard(false)]);
+      const nextSession = await gateway.login(request);
+      setSummary(null);
+      setLeaderboard(null);
+      onSessionChange(nextSession);
     }
     catch (reason) { setError(errorMessage(reason, "登录失败，请检查账号或网络。")); }
     finally { setBusy(false); }
@@ -271,12 +264,14 @@ export function AccountPage({ platform, onNotify }: AccountPageProps) {
   const logout = async () => {
     if (!gateway) return;
     setBusy(true);
-    try { await gateway.logout(); setSummary(null); setLeaderboard(null); setSession({ status: "signedOut", source: session?.source ?? "mock" }); }
+    try { await gateway.logout(); setSummary(null); setLeaderboard(null); onSessionChange({ status: "signedOut", source: session?.source ?? "mock" }); }
     catch (reason) { setError(errorMessage(reason, "退出登录失败。")); }
     finally { setBusy(false); }
   };
 
   if (!gateway) return <section className="account-unavailable"><h1>账户功能仅在桌面版提供</h1><p>Chrome 扩展继续保持完全本地运行。</p></section>;
+  if (sessionState.status === "loading") return <section className="account-unavailable" role="status"><h1>正在读取登录状态</h1><p>请稍候。</p></section>;
+  if (sessionState.status === "error") return <div className="account-layout"><LoginPanel onLogin={login} onRegister={openRegistration} busy={busy} error={sessionState.message} /></div>;
   if (!session || session.status !== "signedIn") return <div className="account-layout"><LoginPanel onLogin={login} onRegister={openRegistration} busy={busy} error={error} /></div>;
 
   return <div className="account-layout">

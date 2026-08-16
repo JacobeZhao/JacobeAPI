@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { AccountPage } from "../../src/features/account/AccountPage";
 import type { AccountSessionView, AccountSummarySnapshot, LeaderboardSnapshot } from "../../src/domain/account";
 import type { PlatformServices } from "../../src/platform/contracts";
@@ -80,13 +81,18 @@ function createPlatform(initial: AccountSessionView = signedOut) {
   return { platform, apply, restore };
 }
 
+function AccountPageHarness({ platform, initial, onNotify }: { platform: PlatformServices; initial: AccountSessionView; onNotify(message: string, tone?: "success" | "error"): void }) {
+  const [session, setSession] = useState(initial);
+  return <AccountPage platform={platform} sessionState={{ status: "ready", session }} onSessionChange={setSession} onNotify={onNotify} />;
+}
+
 describe("AccountPage", () => {
   afterEach(cleanup);
 
   it("logs in and displays independently formatted usage data", async () => {
     const user = userEvent.setup();
     const { platform } = createPlatform();
-    render(<AccountPage platform={platform} onNotify={vi.fn()} />);
+    render(<AccountPageHarness platform={platform} initial={signedOut} onNotify={vi.fn()} />);
 
     await screen.findByRole("heading", { name: "连接你的中转站账户" });
     await user.type(screen.getByPlaceholderText("邮箱或用户名"), "user@example.com");
@@ -102,7 +108,7 @@ describe("AccountPage", () => {
   it("opens netapi registration with the platform browser gateway", async () => {
     const user = userEvent.setup();
     const { platform } = createPlatform();
-    render(<AccountPage platform={platform} onNotify={vi.fn()} />);
+    render(<AccountPageHarness platform={platform} initial={signedOut} onNotify={vi.fn()} />);
 
     await user.click(await screen.findByRole("link", { name: /前往注册/ }));
     expect(platform.openExternalUrl).toHaveBeenCalledWith("https://netapi.cc/");
@@ -112,7 +118,7 @@ describe("AccountPage", () => {
     const user = userEvent.setup();
     const { platform, apply } = createPlatform(signedIn);
     const onNotify = vi.fn();
-    render(<AccountPage platform={platform} onNotify={onNotify} />);
+    render(<AccountPageHarness platform={platform} initial={signedIn} onNotify={onNotify} />);
 
     await screen.findByText("一键配置 AI 工具");
     expect(screen.getByText("模拟密钥 · 测试配置")).toBeInTheDocument();
@@ -131,7 +137,7 @@ describe("AccountPage", () => {
     const { platform, apply } = createPlatform(signedIn);
     const onNotify = vi.fn();
     apply.mockRejectedValueOnce(new Error("测试配置写入失败"));
-    render(<AccountPage platform={platform} onNotify={onNotify} />);
+    render(<AccountPageHarness platform={platform} initial={signedIn} onNotify={onNotify} />);
 
     await user.click((await screen.findAllByRole("button", { name: "配置" }))[0]);
     await user.click(await screen.findByRole("button", { name: "确认应用" }));
@@ -151,7 +157,7 @@ describe("AccountPage", () => {
       path: "C:\\.codex\\config.toml",
       createdAt: "2026-08-16T08:00:00Z",
     }] : []);
-    render(<AccountPage platform={platform} onNotify={onNotify} />);
+    render(<AccountPageHarness platform={platform} initial={signedIn} onNotify={onNotify} />);
 
     const heading = await screen.findByRole("heading", { name: "一键配置 AI 工具" });
     const section = heading.closest("section");
@@ -164,7 +170,7 @@ describe("AccountPage", () => {
 
   it("keeps formal configuration disabled until the live API is available", async () => {
     const { platform } = createPlatform(signedInLive);
-    render(<AccountPage platform={platform} onNotify={vi.fn()} />);
+    render(<AccountPageHarness platform={platform} initial={signedInLive} onNotify={vi.fn()} />);
 
     expect(await screen.findByText("正式 API 尚未接入")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "配置" }).every((button) => button.hasAttribute("disabled"))).toBe(true);

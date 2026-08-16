@@ -7,7 +7,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl,
+    WebviewWindowBuilder,
 };
 
 pub const ORB_LABEL: &str = "orb";
@@ -511,6 +512,12 @@ pub fn show_manager<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     manager.set_focus().map_err(|error| error.to_string())
 }
 
+pub fn show_manager_home<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    show_manager(app)?;
+    app.emit_to(MANAGER_LABEL, "manager-navigate", "library")
+        .map_err(|error| error.to_string())
+}
+
 pub fn hide_manager<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     app.get_webview_window(MANAGER_LABEL)
         .ok_or_else(|| "管理器窗口尚未创建".to_string())?
@@ -622,5 +629,5 @@ pub fn set_orb_always_on_top<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> R
 }
 
 pub fn handle_second_instance<R: Runtime>(app: &AppHandle<R>) {
-    let _ = show_manager(app);
+    let _ = show_manager_home(app);
 }

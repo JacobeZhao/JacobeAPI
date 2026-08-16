@@ -32,7 +32,7 @@ impl CliConfigPaths {
         if !user_profile.is_absolute() || has_unsafe_prefix(&user_profile) {
             return Err(ConfigError::new(
                 ConfigErrorCode::UnsafePath,
-                "the Windows user profile path is not safe",
+                "the user home path is not safe",
             ));
         }
         Ok(Self {
@@ -43,10 +43,15 @@ impl CliConfigPaths {
     }
 
     pub fn discover_from_environment() -> ConfigResult<Self> {
-        let profile = std::env::var_os("USERPROFILE").ok_or_else(|| {
+        #[cfg(windows)]
+        const HOME_VARIABLE: &str = "USERPROFILE";
+        #[cfg(not(windows))]
+        const HOME_VARIABLE: &str = "HOME";
+
+        let profile = std::env::var_os(HOME_VARIABLE).ok_or_else(|| {
             ConfigError::new(
                 ConfigErrorCode::UnsupportedPath,
-                "USERPROFILE is not available",
+                format!("{HOME_VARIABLE} is not available"),
             )
         })?;
         Self::discover(
@@ -64,13 +69,22 @@ impl CliConfigPaths {
     }
 
     pub fn display_path(target: CliConfigTarget) -> String {
+        #[cfg(windows)]
         match target {
             CliConfigTarget::Codex => r"~\.codex\config.toml".into(),
             CliConfigTarget::Claude => r"~\.claude\settings.json".into(),
         }
+        #[cfg(not(windows))]
+        match target {
+            CliConfigTarget::Codex => "~/.codex/config.toml".into(),
+            CliConfigTarget::Claude => "~/.claude/settings.json".into(),
+        }
     }
 
-    pub(crate) fn validate_target(&self, target: CliConfigTarget) -> ConfigResult<&Path> {
+    pub(crate) fn validate_target_for_preview(
+        &self,
+        target: CliConfigTarget,
+    ) -> ConfigResult<&Path> {
         let path = self.path_for(target);
         let expected_parent = match target {
             CliConfigTarget::Codex => self.user_profile.join(".codex"),
@@ -83,7 +97,18 @@ impl CliConfigPaths {
             ));
         }
         validate_existing_component(&self.user_profile)?;
-        validate_existing_component(&expected_parent)?;
+        if expected_parent.exists() {
+            validate_existing_component(&expected_parent)?;
+            if !fs::metadata(&expected_parent)
+                .map_err(|error| ConfigError::io("cannot inspect configuration directory", error))?
+                .is_dir()
+            {
+                return Err(ConfigError::new(
+                    ConfigErrorCode::UnsafePath,
+                    "configuration parent is not a directory",
+                ));
+            }
+        }
         if path.exists() {
             validate_existing_component(path)?;
             if !fs::metadata(path)
@@ -98,10 +123,64 @@ impl CliConfigPaths {
         }
         Ok(path)
     }
+
+    pub(crate) fn prepare_target_parent(&self, target: CliConfigTarget) -> ConfigResult<&Path> {
+        let path = self.validate_target_for_preview(target)?;
+        let parent = path.parent().ok_or_else(|| {
+            ConfigError::new(
+                ConfigErrorCode::UnsafePath,
+                "configuration target has no parent directory",
+            )
+        })?;
+        match fs::create_dir(parent) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(ConfigError::io(
+                    "cannot create configuration directory",
+                    error,
+                ))
+            }
+        }
+        validate_existing_component(parent)?;
+        if !fs::metadata(parent)
+            .map_err(|error| ConfigError::io("cannot inspect configuration directory", error))?
+            .is_dir()
+        {
+            return Err(ConfigError::new(
+                ConfigErrorCode::UnsafePath,
+                "configuration parent is not a directory",
+            ));
+        }
+        Ok(path)
+    }
+
+    pub(crate) fn validate_target(&self, target: CliConfigTarget) -> ConfigResult<&Path> {
+        let path = self.validate_target_for_preview(target)?;
+        let parent = path.parent().expect("approved target always has a parent");
+        if !parent.exists() {
+            return Err(ConfigError::new(
+                ConfigErrorCode::ConfigMissing,
+                "configuration directory does not exist",
+            ));
+        }
+        Ok(path)
+    }
 }
 
+#[cfg(windows)]
 fn has_unsafe_prefix(path: &Path) -> bool {
-    matches!(path.components().next(), Some(Component::Prefix(prefix)) if !matches!(prefix.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)))
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+        || matches!(path.components().next(), Some(Component::Prefix(prefix)) if !matches!(prefix.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)))
+}
+
+#[cfg(not(windows))]
+fn has_unsafe_prefix(path: &Path) -> bool {
+    !matches!(path.components().next(), Some(Component::RootDir))
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
 }
 
 fn validate_existing_component(path: &Path) -> ConfigResult<()> {
@@ -144,15 +223,33 @@ mod tests {
 
     #[test]
     fn discovers_only_fixed_user_paths() {
-        let paths = CliConfigPaths::discover(PathBuf::from(r"C:\Users\test"), None, None)
+        #[cfg(windows)]
+        let profile = PathBuf::from(r"C:\Users\test");
+        #[cfg(not(windows))]
+        let profile = PathBuf::from("/Users/test");
+        let paths = CliConfigPaths::discover(profile.clone(), None, None)
             .expect("fixed paths should be accepted");
         assert_eq!(
             paths.path_for(CliConfigTarget::Codex),
-            Path::new(r"C:\Users\test\.codex\config.toml")
+            profile.join(".codex").join("config.toml")
         );
         assert_eq!(
             paths.path_for(CliConfigTarget::Claude),
-            Path::new(r"C:\Users\test\.claude\settings.json")
+            profile.join(".claude").join("settings.json")
+        );
+    }
+
+    #[test]
+    fn display_paths_use_the_platform_separator() {
+        #[cfg(windows)]
+        assert_eq!(
+            CliConfigPaths::display_path(CliConfigTarget::Claude),
+            r"~\.claude\settings.json"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            CliConfigPaths::display_path(CliConfigTarget::Claude),
+            "~/.claude/settings.json"
         );
     }
 }

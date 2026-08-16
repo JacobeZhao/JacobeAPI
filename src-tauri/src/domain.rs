@@ -10,6 +10,7 @@ use crate::error::{AppError, AppResult};
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_SLOT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_CARDS: usize = 2_000;
+pub const SIGNED_OUT_LIMIT_PER_KIND: usize = 3;
 pub const MAX_TITLE_LENGTH: usize = 120;
 pub const MAX_DESCRIPTION_LENGTH: usize = 600;
 pub const MAX_CONTENT_LENGTH: usize = 100 * 1024;
@@ -21,6 +22,12 @@ pub const MAX_SAFE_REVISION: u64 = 9_007_199_254_740_991;
 
 const SEED_PACK_V0_JSON: &str = include_str!("../../seed-packs/v0.json");
 const SEED_PACK_V1_JSON: &str = include_str!("../../seed-packs/v1.json");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryAccess {
+    SignedOut,
+    SignedIn,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

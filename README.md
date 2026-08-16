@@ -1,6 +1,6 @@
 # JacobeAPI
 
-JacobeAPI 是一个本地优先的 Skill 与 MCP 配置管理工具。Skill、提示词、标签和 MCP 配置始终保存在本机；Windows 桌面版还可由用户主动连接 netapi.cc 账户，查看用量并配置本机 AI 工具。
+JacobeAPI 是一个本地优先的 Skill 与 MCP 配置管理工具。Skill、提示词、标签和 MCP 配置始终保存在本机；Windows 与 macOS 桌面版还可由用户主动连接 netapi.cc 账户，查看用量并配置本机 AI 工具。
 
 ## Chrome 扩展
 
@@ -23,24 +23,31 @@ JacobeAPI 是一个本地优先的 Skill 与 MCP 配置管理工具。Skill、�
 ### 数据与备份
 
 - 数据保存在 Chrome 的扩展本地存储中，不会自动发送到网络。
+- Chrome 扩展保持无限的本地 Skill 与 MCP 资料库，不使用桌面版的访客额度，也不提供 netapi.cc 登录解锁。
 - 删除扩展或清理扩展数据会删除 Chrome 版的本地内容。
 - 在管理页的“数据与备份”中定期导出 JSON；导入前会先校验并显示冲突预览。
 - MCP 配置不是加密保险库。请使用 `${ENV_VAR}` 一类占位符，不要保存真实 API Key、Token 或密码。
 - “下载 Skill”“复制使用说明”和“复制 MCP 配置”都不会执行命令或修改电脑上的其他程序。
 
-## Windows 桌面版 Alpha
+## 桌面版 Alpha
+
+桌面版提供 Windows x64 安装包和同时支持 Apple Silicon、Intel 的 macOS Universal DMG。macOS 的安装、Gatekeeper 提示、数据位置、构建与签名说明见 [macOS 桌面版指南](docs/macos-desktop.md)。
+
+### Windows
 
 桌面版支持 Windows 10 22H2 和 Windows 11 的 x64 系统。它提供常驻托盘、桌面悬浮球、快速面板和完整管理窗口。
 
 Windows 桌面版与 Chrome 扩展使用不同的本地存储，不会自动同步。已有 Chrome 数据需要先导出 JSON，再导入桌面版。安装、使用、数据位置、手动迁移和卸载说明见 [Windows 桌面版指南](docs/windows-desktop.md)。
 
-当前账户功能使用清楚标注的模拟数据与可替换 API adapter，因为 netapi.cc 的正式接口仍在开发。模拟登录不会请求 netapi.cc，且进程重启后需要重新登录。正式 HTTP adapter 和 Windows 持久会话凭据将在 API 合同冻结后启用。
+完整管理窗口默认进入桌面首页，账户状态和常用入口集中显示在左侧栏。未登录或登录已过期时，桌面资料库最多保存 3 个 Skill 和 3 个 MCP，内置预置也计入额度；登录后解除这项产品额度，但仍保留资料完整性和安全上限。升级前已经超过额度的资料不会被裁剪，访客仍可查看、编辑和删除现有内容，但不能继续增加对应类型的数量。
+
+当前账户功能使用清楚标注的模拟数据与可替换 API adapter，因为 netapi.cc 的正式接口仍在开发。模拟登录不会请求 netapi.cc；Demo 会话凭据保存在 Windows Credential Manager 或 macOS Keychain 中，可在应用重启后恢复，退出登录会撤销本机恢复状态。正式账户登录、服务端 entitlement、撤销和跨设备会话语义仍依赖上游 API 合同落地。
 
 本机演示账户为 `demo@netapi.cc`，密码为 `jacobe-demo`。只有这个账号走 mock 数据；其他账号不会被伪装成已登录，正式登录 API 未接入时会返回服务暂不可用。
 
 中转站后端需要开放的接口、字段和安全约束见 [netapi.cc 桌面客户端 API 合同](docs/netapi-api-contract.md)。
 
-“一键配置”引擎仅支持 Codex 的 OpenAI Responses 直连配置与 Claude Code 的 Anthropic Messages 直连配置。应用会先展示脱敏预览，只有用户确认后才备份并修改目标配置；不包含本地代理或协议转换。Demo 账户会使用不能用于正式 API 调用的模拟凭据，可以完整测试检测、预览、确认写入、备份和恢复流程。这个流程会修改真实的本机 Codex 或 Claude Code 配置文件，测试前应先关闭相关工具，测试后可从“最近备份”恢复。其他账户在正式模型目录与网关密钥接口接入前不能生成新配置，但仍可恢复已有本地备份。
+“一键配置”引擎仅支持 Codex 的 OpenAI Responses 直连配置与 Claude Code 的 Anthropic Messages 直连配置。应用会先展示脱敏预览，只有用户确认后才创建加密备份并替换应用明确管理的字段；Claude 配置中的未知根字段和环境字段会保留。配置在预览后被其他程序改动时，应用会拒绝使用过期预览；缺少 `.codex` 或 `.claude` 目录时，只在确认应用后创建受管目录。不包含本地代理或协议转换。Demo 账户会使用不能用于正式 API 调用的模拟凭据，可以完整测试检测、预览、确认写入、备份和恢复流程。这个流程会修改真实的本机 Codex 或 Claude Code 配置文件，测试前应先关闭相关工具，测试后可从“最近备份”恢复。其他账户在正式模型目录与网关密钥接口接入前不能生成新配置，但仍可恢复已有本地备份。
 
 当前 Alpha 安装包可能尚未进行代码签名，因此 Windows SmartScreen 可能显示“Windows 已保护你的电脑”。仅运行来自可信构建来源的安装包。面向公众测试的安装包应先完成代码签名，或通过 Microsoft Store 分发。
 

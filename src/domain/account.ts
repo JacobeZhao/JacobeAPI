@@ -15,6 +15,12 @@ export type AccountSessionView =
   | { status: "signedIn"; source: AccountDataSource; user: AccountUserView; expiresAt?: string }
   | { status: "expired"; source: AccountDataSource; user?: AccountUserView; expiresAt?: string };
 
+export type AccountSessionState =
+  | { status: "unavailable" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; session: AccountSessionView };
+
 export interface DashboardTokenUsage {
   total: string;
   input: string;

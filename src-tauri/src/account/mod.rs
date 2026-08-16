@@ -2,7 +2,7 @@ mod credentials;
 
 use std::{
     fmt,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard},
 };
 
 use thiserror::Error;
@@ -12,8 +12,13 @@ pub use crate::netapi::{
     DashboardSnapshot, DataSource, LeaderboardQuery, LeaderboardRow, LeaderboardSnapshot,
     LoginRequest, SessionStatus, TokenCount,
 };
+#[cfg(target_os = "macos")]
+pub use credentials::MacOsCredentialStore;
+#[cfg(windows)]
+pub use credentials::WindowsCredentialStore;
 pub use credentials::{CredentialError, CredentialStore, MemoryCredentialStore};
 
+use crate::domain::LibraryAccess;
 use crate::netapi::{MockNetApiTransport, NetApiError, NetApiTransport};
 
 const SESSION_CREDENTIAL_KEY: &str = "netapi-session";
@@ -41,7 +46,19 @@ pub struct AccountService {
     transport: Arc<dyn NetApiTransport>,
     credentials: Arc<dyn CredentialStore>,
     operation_gate: Mutex<()>,
+    authorization_gate: RwLock<()>,
     state: Mutex<AccountState>,
+}
+
+pub struct LibraryAccessGuard<'a> {
+    _guard: RwLockReadGuard<'a, ()>,
+    access: LibraryAccess,
+}
+
+impl LibraryAccessGuard<'_> {
+    pub fn access(&self) -> LibraryAccess {
+        self.access
+    }
 }
 
 impl fmt::Debug for AccountService {
@@ -58,12 +75,27 @@ impl fmt::Debug for AccountService {
 impl AccountService {
     pub fn new(transport: Arc<dyn NetApiTransport>, credentials: Arc<dyn CredentialStore>) -> Self {
         let source = transport.source();
+        let session = match credentials.load(SESSION_CREDENTIAL_KEY) {
+            Ok(Some(token)) => match transport.restore_session(&token) {
+                Ok(session)
+                    if session.status == SessionStatus::SignedIn && session.user.is_some() =>
+                {
+                    session
+                }
+                Ok(_) | Err(_) => {
+                    let _ = credentials.delete(SESSION_CREDENTIAL_KEY);
+                    AccountSessionView::signed_out(source)
+                }
+            },
+            Ok(None) | Err(_) => AccountSessionView::signed_out(source),
+        };
         Self {
             transport,
             credentials,
             operation_gate: Mutex::new(()),
+            authorization_gate: RwLock::new(()),
             state: Mutex::new(AccountState {
-                session: AccountSessionView::signed_out(source),
+                session,
                 summary: None,
                 leaderboard: None,
             }),
@@ -77,8 +109,28 @@ impl AccountService {
         )
     }
 
+    pub fn mock_with_credentials(credentials: Arc<dyn CredentialStore>) -> Self {
+        Self::new(Arc::new(MockNetApiTransport), credentials)
+    }
+
     pub fn get_session(&self) -> Result<AccountSessionView, AccountError> {
         Ok(self.lock_state()?.session.clone())
+    }
+
+    pub fn library_access(&self) -> Result<LibraryAccessGuard<'_>, AccountError> {
+        let guard = self
+            .authorization_gate
+            .read()
+            .map_err(|_| AccountError::State("account authorization lock is poisoned".into()))?;
+        let access = if self.lock_state()?.session.status == SessionStatus::SignedIn {
+            LibraryAccess::SignedIn
+        } else {
+            LibraryAccess::SignedOut
+        };
+        Ok(LibraryAccessGuard {
+            _guard: guard,
+            access,
+        })
     }
 
     pub fn login(&self, request: &LoginRequest) -> Result<AccountSessionView, AccountError> {
@@ -91,6 +143,10 @@ impl AccountService {
             )));
         }
 
+        let _authorization = self
+            .authorization_gate
+            .write()
+            .map_err(|_| AccountError::State("account authorization lock is poisoned".into()))?;
         if let Err(error) = self
             .credentials
             .save(SESSION_CREDENTIAL_KEY, &authenticated.access_token)
@@ -208,6 +264,10 @@ impl AccountService {
             Ok(Some(token)) => self.transport.logout(token),
             Ok(None) | Err(_) => Ok(()),
         };
+        let _authorization = self
+            .authorization_gate
+            .write()
+            .map_err(|_| AccountError::State("account authorization lock is poisoned".into()))?;
         let credential_result = self.credentials.delete(SESSION_CREDENTIAL_KEY);
         {
             let mut state = self.lock_state()?;
@@ -227,6 +287,10 @@ impl AccountService {
     }
 
     fn expire_session(&self) -> Result<(), AccountError> {
+        let _authorization = self
+            .authorization_gate
+            .write()
+            .map_err(|_| AccountError::State("account authorization lock is poisoned".into()))?;
         let credential_result = self.credentials.delete(SESSION_CREDENTIAL_KEY);
         let mut state = self.lock_state()?;
         state.session = state.session.expired();
@@ -247,6 +311,7 @@ impl AccountService {
 mod tests {
     use super::*;
     use crate::netapi::{AuthenticatedSession, SecretString};
+    use std::{sync::mpsc, thread, time::Duration};
 
     fn request(password: &str) -> LoginRequest {
         LoginRequest {
@@ -306,6 +371,13 @@ mod tests {
             })
         }
 
+        fn restore_session(
+            &self,
+            _access_token: &SecretString,
+        ) -> Result<AccountSessionView, NetApiError> {
+            Err(NetApiError::Unauthorized)
+        }
+
         fn get_summary(
             &self,
             _access_token: &SecretString,
@@ -358,5 +430,81 @@ mod tests {
         assert!(!serialized.contains("mock-session"));
         assert!(!serialized.contains("accessToken"));
         assert!(!format!("{service:?}").contains("mock-session"));
+    }
+
+    #[test]
+    fn demo_session_restores_from_persistent_credential_store() {
+        let credentials = Arc::new(MemoryCredentialStore::default());
+        let first = AccountService::mock_with_credentials(credentials.clone());
+        first
+            .login(&request(crate::netapi::MOCK_ACCOUNT_PASSWORD))
+            .unwrap();
+        drop(first);
+
+        let restored = AccountService::mock_with_credentials(credentials);
+        let session = restored.get_session().unwrap();
+        assert_eq!(session.status, SessionStatus::SignedIn);
+        assert_eq!(
+            session.user.and_then(|user| user.email),
+            Some(crate::netapi::MOCK_ACCOUNT_IDENTIFIER.into())
+        );
+    }
+
+    #[test]
+    fn invalid_persisted_token_fails_closed_and_is_deleted() {
+        let credentials = Arc::new(MemoryCredentialStore::default());
+        credentials
+            .save(
+                SESSION_CREDENTIAL_KEY,
+                &SecretString::new("not-a-demo-token"),
+            )
+            .unwrap();
+
+        let service = AccountService::mock_with_credentials(credentials.clone());
+        assert_eq!(
+            service.get_session().unwrap().status,
+            SessionStatus::SignedOut
+        );
+        assert!(credentials.load(SESSION_CREDENTIAL_KEY).unwrap().is_none());
+    }
+
+    #[test]
+    fn logout_waits_for_an_in_flight_library_authorization() {
+        let service = Arc::new(AccountService::mock());
+        service
+            .login(&request(crate::netapi::MOCK_ACCOUNT_PASSWORD))
+            .unwrap();
+        let access = service.library_access().unwrap();
+        assert_eq!(access.access(), LibraryAccess::SignedIn);
+        assert!(service.authorization_gate.try_write().is_err());
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let logout_service = service.clone();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = logout_service.logout();
+            finished_tx.send(result).unwrap();
+        });
+
+        started_rx.recv().unwrap();
+        assert!(finished_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
+        assert_eq!(
+            service.get_session().unwrap().status,
+            SessionStatus::SignedIn
+        );
+
+        drop(access);
+        finished_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(
+            service.get_session().unwrap().status,
+            SessionStatus::SignedOut
+        );
     }
 }

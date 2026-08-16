@@ -12,11 +12,32 @@ use std::{
 const STARTUP_LOG_MAX_BYTES: usize = 8 * 1024;
 
 fn startup_log_path() -> Option<PathBuf> {
+    platform_startup_log_path()
+}
+
+#[cfg(windows)]
+fn platform_startup_log_path() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|root| {
         PathBuf::from(root)
             .join("com.jacobe.skills")
             .join("startup-error.log")
     })
+}
+
+#[cfg(target_os = "macos")]
+fn platform_startup_log_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|root| {
+        PathBuf::from(root)
+            .join("Library")
+            .join("Logs")
+            .join("com.jacobe.skills")
+            .join("startup-error.log")
+    })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn platform_startup_log_path() -> Option<PathBuf> {
+    None
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> &str {

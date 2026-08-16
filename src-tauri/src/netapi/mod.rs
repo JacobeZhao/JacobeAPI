@@ -4,6 +4,7 @@ mod mock;
 use std::fmt;
 
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 pub use dto::{
     AccountSessionView, AccountSummarySnapshot, AccountUser, BalanceView, DashboardPeriod,
@@ -12,11 +13,11 @@ pub use dto::{
 };
 pub use mock::{MockNetApiTransport, MOCK_ACCOUNT_IDENTIFIER, MOCK_ACCOUNT_PASSWORD};
 
-pub struct SecretString(String);
+pub struct SecretString(Zeroizing<String>);
 
 impl SecretString {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(Zeroizing::new(value.into()))
     }
 
     pub(crate) fn expose(&self) -> &str {
@@ -66,6 +67,10 @@ pub enum NetApiError {
 pub trait NetApiTransport: Send + Sync {
     fn source(&self) -> DataSource;
     fn login(&self, request: &LoginRequest) -> Result<AuthenticatedSession, NetApiError>;
+    fn restore_session(
+        &self,
+        access_token: &SecretString,
+    ) -> Result<AccountSessionView, NetApiError>;
     fn get_summary(
         &self,
         access_token: &SecretString,

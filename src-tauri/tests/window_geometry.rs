@@ -118,8 +118,8 @@ fn quick_panel_expands_inward_from_each_edge() {
         x: 1920 - ORB_SIZE as i32 - WINDOW_MARGIN,
         ..left_orb
     };
-    let left = place_quick_panel(left_orb, PRIMARY);
-    let right = place_quick_panel(right_orb, PRIMARY);
+    let left = place_quick_panel(left_orb, PRIMARY, 1.0);
+    let right = place_quick_panel(right_orb, PRIMARY, 1.0);
     assert_eq!(left.direction, ExpandDirection::Right);
     assert!(left.rect.x > left_orb.x);
     assert_eq!(right.direction, ExpandDirection::Left);
@@ -134,9 +134,30 @@ fn quick_panel_is_vertically_clamped() {
         width: ORB_SIZE,
         height: ORB_SIZE,
     };
-    let placement = place_quick_panel(orb, PRIMARY);
+    let placement = place_quick_panel(orb, PRIMARY, 1.0);
     assert_eq!(placement.rect.y, 0);
     assert_eq!(placement.rect.height, QUICK_HEIGHT);
+}
+
+#[test]
+fn quick_panel_scales_for_hidpi_displays() {
+    // 模拟 Retina 2x：物理工作区足够大，面板应按 scale 放大到 2 倍物理尺寸，
+    // 保证 WebView 内按逻辑像素设计的 420×700 内容不被压缩。
+    let retina = WorkArea {
+        x: 0,
+        y: 0,
+        width: 3024,
+        height: 1964,
+    };
+    let orb = WindowRect {
+        x: WINDOW_MARGIN,
+        y: 300,
+        width: ORB_SIZE,
+        height: ORB_SIZE,
+    };
+    let placement = place_quick_panel(orb, retina, 2.0);
+    assert_eq!(placement.rect.width, QUICK_WIDTH * 2);
+    assert_eq!(placement.rect.height, QUICK_HEIGHT * 2);
 }
 
 #[test]
@@ -155,6 +176,7 @@ fn small_work_area_shrinks_windows_without_overflow() {
             height: ORB_SIZE,
         },
         tiny,
+        1.0,
     );
     assert_eq!(placement.rect.width, tiny.width.min(QUICK_WIDTH));
     assert_eq!(placement.rect.height, tiny.height.min(QUICK_HEIGHT));

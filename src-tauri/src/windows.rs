@@ -233,7 +233,7 @@ pub fn snap_orb(rect: WindowRect, work_area: WorkArea) -> (WindowRect, Horizonta
     )
 }
 
-pub fn place_quick_panel(orb: WindowRect, work_area: WorkArea) -> QuickPlacement {
+pub fn place_quick_panel(orb: WindowRect, work_area: WorkArea, scale: f64) -> QuickPlacement {
     let work_center = i64::from(work_area.x) + i64::from(work_area.width) / 2;
     let orb_center_x = i64::from(orb.x) + i64::from(orb.width) / 2;
     let direction = if orb_center_x <= work_center {
@@ -243,8 +243,8 @@ pub fn place_quick_panel(orb: WindowRect, work_area: WorkArea) -> QuickPlacement
     };
     let size = fit_size(
         Size {
-            width: QUICK_WIDTH,
-            height: QUICK_HEIGHT,
+            width: scale_logical_dimension(QUICK_WIDTH, scale),
+            height: scale_logical_dimension(QUICK_HEIGHT, scale),
         },
         work_area,
     );
@@ -280,6 +280,35 @@ fn monitor_work_area(monitor: &tauri::Monitor) -> WorkArea {
         width: area.size.width,
         height: area.size.height,
     }
+}
+
+/// QUICK_WIDTH/QUICK_HEIGHT 等常量按“逻辑像素”设计；work_area 与 set_size(PhysicalSize)
+/// 均为物理像素。在 HiDPI（如 macOS Retina 2x）上需乘以 scale factor 换算，
+/// 否则面板实际宽度只有设计值的一半。
+fn scale_logical_dimension(value: u32, scale: f64) -> u32 {
+    if !scale.is_finite() || scale <= 1.0 {
+        return value;
+    }
+    ((f64::from(value) * scale).round() as u32).max(1)
+}
+
+/// 找到与指定 work area 匹配的显示器，返回其 scale factor（找不到时按 1.0 处理）。
+fn work_area_scale_factor<R: Runtime>(app: &AppHandle<R>, area: WorkArea) -> f64 {
+    app.available_monitors()
+        .ok()
+        .and_then(|monitors| {
+            monitors
+                .iter()
+                .find(|monitor| {
+                    let candidate = monitor_work_area(monitor);
+                    candidate.x == area.x
+                        && candidate.y == area.y
+                        && candidate.width == area.width
+                        && candidate.height == area.height
+                })
+                .map(|monitor| monitor.scale_factor())
+        })
+        .unwrap_or(1.0)
 }
 
 fn available_work_areas<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<WorkArea>, String> {
@@ -447,10 +476,17 @@ fn orb_rect<R: Runtime>(app: &AppHandle<R>) -> Result<WindowRect, String> {
 
 pub fn setup_windows<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let settings = load_settings(app);
-    let initial_area = app
+    let initial_monitor = app
         .primary_monitor()?
-        .or_else(|| app.available_monitors().ok()?.into_iter().next())
-        .map(|monitor| monitor_work_area(&monitor));
+        .or_else(|| app.available_monitors().ok()?.into_iter().next());
+    // work_area 为物理像素，而 WebviewWindowBuilder::position 接收逻辑坐标，
+    // HiDPI 下需除以 scale factor 换算，否则悬浮球初始位置会跑到屏幕外。
+    let monitor_scale = initial_monitor
+        .as_ref()
+        .map(|monitor| monitor.scale_factor())
+        .unwrap_or(1.0)
+        .max(1.0);
+    let initial_area = initial_monitor.map(|monitor| monitor_work_area(&monitor));
     let initial_orb = initial_area
         .map(|area| restored_orb_rect(settings, area))
         .unwrap_or(WindowRect {
@@ -464,7 +500,10 @@ pub fn setup_windows<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         WebviewWindowBuilder::new(app, ORB_LABEL, WebviewUrl::App("desktop-orb.html".into()))
             .title("JacobeAPI")
             .inner_size(f64::from(ORB_SIZE), f64::from(ORB_SIZE))
-            .position(f64::from(initial_orb.x), f64::from(initial_orb.y))
+            .position(
+                f64::from(initial_orb.x) / monitor_scale,
+                f64::from(initial_orb.y) / monitor_scale,
+            )
             .decorations(false)
             .transparent(true)
             .resizable(false)
@@ -557,7 +596,8 @@ pub fn toggle_quick_panel<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> 
     let work_areas = available_work_areas(app)?;
     let area = choose_work_area_for_rect(orb, &work_areas)
         .ok_or_else(|| "未找到可用显示器".to_string())?;
-    let placement = place_quick_panel(orb, area);
+    let scale = work_area_scale_factor(app, area);
+    let placement = place_quick_panel(orb, area, scale);
     quick
         .set_size(PhysicalSize::new(
             placement.rect.width,

@@ -76,17 +76,21 @@ if (dmgVerification.status !== 0) {
   fail(`DMG verification failed: ${dmgFiles[0]}`);
 }
 
-const signatureDetails = run("codesign", ["--display", "--verbose=2", appPath], {
-  capture: true,
-});
-if (signatureDetails.status === 0) {
+const requireCodeSignature = process.env.REQUIRE_MACOS_CODE_SIGNATURE === "true";
+if (requireCodeSignature) {
+  const signatureDetails = run("codesign", ["--display", "--verbose=2", appPath], {
+    capture: true,
+  });
+  if (signatureDetails.status !== 0) {
+    fail(`Expected a signed app bundle, but no code signature was found: ${appPath}`);
+  }
   const signatureVerification = run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
   if (signatureVerification.status !== 0) {
     fail(`Code signature verification failed: ${appPath}`);
   }
   console.log("A code signature is present and valid.");
 } else {
-  console.log("No code signature is present; treating this as an unsigned test build.");
+  console.log("Skipping code signature verification for an unsigned test build.");
 }
 
 console.log(`Verified Universal app: ${basename(appPath)}`);

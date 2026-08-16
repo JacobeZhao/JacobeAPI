@@ -116,6 +116,8 @@ jobs:
           uploadUpdaterJson: true
           args: --target universal-apple-darwin --bundles app,dmg
       - name: Verify Universal macOS package
+        env:
+          REQUIRE_MACOS_CODE_SIGNATURE: ${{ steps.apple-signing.outputs.enabled }}
         run: npm run verify:macos-package
       - name: Archive app bundle
         shell: bash

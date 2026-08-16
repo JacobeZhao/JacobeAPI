@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountPage } from "../../src/features/account/AccountPage";
@@ -11,6 +11,11 @@ const signedIn: AccountSessionView = {
   status: "signedIn",
   source: "mock",
   user: { id: "me", displayName: "测试用户" },
+};
+const signedInLive: AccountSessionView = {
+  status: "signedIn",
+  source: "live",
+  user: { id: "live-user", displayName: "正式用户" },
 };
 const period = { timezone: "Asia/Shanghai", startsAt: "2026-08-15T16:00:00Z", endsAt: "2026-08-16T16:00:00Z" };
 const summary: AccountSummarySnapshot = {
@@ -36,6 +41,7 @@ const leaderboard: LeaderboardSnapshot = {
 function createPlatform(initial: AccountSessionView = signedOut) {
   let session = initial;
   const apply = vi.fn().mockResolvedValue({ target: "codex", path: "config.toml", appliedAt: "2026-08-16T08:00:00Z", restartRequired: true });
+  const restore = vi.fn().mockResolvedValue({ target: "codex", path: "config.toml", restoredAt: "2026-08-16T08:10:00Z", restartRequired: true });
   const platform: PlatformServices = {
     ...previewPlatform,
     kind: "desktop",
@@ -52,14 +58,26 @@ function createPlatform(initial: AccountSessionView = signedOut) {
     },
     cliConfig: {
       scan: vi.fn(async () => [{ target: "codex" as const, path: "C:\\.codex\\config.toml", health: "ready" as const, configuredForNetapi: false }]),
-      preview: vi.fn(async () => ({ planId: "plan-1", target: "codex" as const, path: "C:\\.codex\\config.toml", changes: [{ field: "model_provider", action: "add" as const, after: "netapi" }], warnings: [], backupWillBeCreated: true })),
+      preview: vi.fn(async () => ({
+        planId: "plan-1",
+        target: "codex" as const,
+        path: "C:\\.codex\\config.toml",
+        changes: [{
+          key: "api_key",
+          action: "add" as const,
+          before: { kind: "absent" as const },
+          after: { kind: "public" as const, value: "should-not-render" },
+        }],
+        warnings: [],
+        backupWillBeCreated: true,
+      })),
       apply,
       listBackups: vi.fn(async () => []),
-      restore: vi.fn(),
+      restore,
       subscribe: () => () => undefined,
     },
   };
-  return { platform, apply };
+  return { platform, apply, restore };
 }
 
 describe("AccountPage", () => {
@@ -93,13 +111,63 @@ describe("AccountPage", () => {
   it("does not apply a client config before explicit preview confirmation", async () => {
     const user = userEvent.setup();
     const { platform, apply } = createPlatform(signedIn);
-    render(<AccountPage platform={platform} onNotify={vi.fn()} />);
+    const onNotify = vi.fn();
+    render(<AccountPage platform={platform} onNotify={onNotify} />);
 
     await screen.findByText("一键配置 AI 工具");
+    expect(screen.getByText("模拟密钥 · 测试配置")).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "配置" })[0]);
     expect(await screen.findByRole("dialog", { name: "Codex 配置预览" })).toBeInTheDocument();
+    expect(screen.getByText("敏感值已隐藏")).toBeInTheDocument();
+    expect(screen.queryByText("should-not-render")).not.toBeInTheDocument();
     expect(apply).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "确认应用" }));
     await waitFor(() => expect(apply).toHaveBeenCalledWith("plan-1"));
+    expect(onNotify).toHaveBeenCalledWith("Codex 配置已应用");
+  });
+
+  it("keeps the preview open and reports an apply failure", async () => {
+    const user = userEvent.setup();
+    const { platform, apply } = createPlatform(signedIn);
+    const onNotify = vi.fn();
+    apply.mockRejectedValueOnce(new Error("测试配置写入失败"));
+    render(<AccountPage platform={platform} onNotify={onNotify} />);
+
+    await user.click((await screen.findAllByRole("button", { name: "配置" }))[0]);
+    await user.click(await screen.findByRole("button", { name: "确认应用" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("测试配置写入失败");
+    expect(screen.getByRole("dialog", { name: "Codex 配置预览" })).toBeInTheDocument();
+    expect(onNotify).not.toHaveBeenCalled();
+  });
+
+  it("lists and restores a local backup for the demo account", async () => {
+    const user = userEvent.setup();
+    const { platform, restore } = createPlatform(signedIn);
+    const onNotify = vi.fn();
+    platform.cliConfig!.listBackups = vi.fn(async (target) => target === "codex" ? [{
+      id: "backup-1",
+      target,
+      path: "C:\\.codex\\config.toml",
+      createdAt: "2026-08-16T08:00:00Z",
+    }] : []);
+    render(<AccountPage platform={platform} onNotify={onNotify} />);
+
+    const heading = await screen.findByRole("heading", { name: "一键配置 AI 工具" });
+    const section = heading.closest("section");
+    expect(section).not.toBeNull();
+    await user.click(await within(section!).findByRole("button", { name: /Codex/ }));
+
+    await waitFor(() => expect(restore).toHaveBeenCalledWith("backup-1"));
+    expect(onNotify).toHaveBeenCalledWith("Codex 已恢复上一份配置");
+  });
+
+  it("keeps formal configuration disabled until the live API is available", async () => {
+    const { platform } = createPlatform(signedInLive);
+    render(<AccountPage platform={platform} onNotify={vi.fn()} />);
+
+    expect(await screen.findByText("正式 API 尚未接入")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "配置" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
+    expect(platform.cliConfig?.preview).not.toHaveBeenCalled();
   });
 });

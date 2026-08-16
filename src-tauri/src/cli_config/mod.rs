@@ -1,10 +1,12 @@
 mod atomic;
+mod credential_helper;
 mod dpapi;
 mod engine;
 mod error;
 mod merge;
 mod paths;
 
+pub use credential_helper::{parse_credential_helper_args, CredentialHelperMode};
 pub use dpapi::DpapiBackupProtector;
 pub use engine::{BackupProtector, ConfigEngine};
 pub use error::{ConfigError, ConfigErrorCode, ConfigResult};
@@ -116,4 +118,29 @@ pub struct ConfigBackupSummary {
     pub target: CliConfigTarget,
     pub path: String,
     pub created_at: String,
+}
+
+#[cfg(test)]
+mod ipc_contract_tests {
+    use super::*;
+
+    #[test]
+    fn preview_change_uses_the_frontend_ipc_shape() {
+        let change = ConfigPreviewChange {
+            key: "model_provider".into(),
+            action: ConfigChangeAction::Add,
+            before: PreviewValue::Absent,
+            after: PreviewValue::Public("netapi-demo".into()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(change).unwrap(),
+            serde_json::json!({
+                "key": "model_provider",
+                "action": "add",
+                "before": { "kind": "absent" },
+                "after": { "kind": "public", "value": "netapi-demo" }
+            })
+        );
+    }
 }

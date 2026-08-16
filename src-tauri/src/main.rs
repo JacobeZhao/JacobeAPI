@@ -49,6 +49,17 @@ fn write_startup_error(error: &tauri::Error) {
 }
 
 fn main() {
+    match jacobe_skills_lib::cli_config::parse_credential_helper_args(std::env::args().skip(1)) {
+        jacobe_skills_lib::cli_config::CredentialHelperMode::Demo(credential) => {
+            println!("{}", credential.expose_for_stdout());
+            return;
+        }
+        jacobe_skills_lib::cli_config::CredentialHelperMode::Invalid => {
+            eprintln!("invalid credential helper request");
+            std::process::exit(2);
+        }
+        jacobe_skills_lib::cli_config::CredentialHelperMode::NotRequested => {}
+    }
     if let Err(error) = jacobe_skills_lib::run() {
         write_startup_error(&error);
         std::process::exit(1);

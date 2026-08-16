@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import "./account.css";
 import type {
+  AccountDataSource,
   AccountSessionView,
   AccountSummarySnapshot,
   LeaderboardSnapshot,
@@ -23,6 +24,7 @@ import type {
   CliConfigApplyResult,
   CliConfigBackupView,
   CliConfigPreview,
+  CliConfigPreviewValue,
   CliConfigStatus,
   CliTarget,
 } from "../../domain/cliConfig";
@@ -56,6 +58,14 @@ function formatDecimalInteger(value: string) {
   return normalized.replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+function previewValue(field: string, value: CliConfigPreviewValue) {
+  if (value.kind === "absent") return "无";
+  if (value.kind === "redacted" || /(key|token|secret|password|authorization|credential)/i.test(field)) {
+    return "敏感值已隐藏";
+  }
+  return value.value;
+}
+
 function LoginPanel({ onLogin, onRegister, busy, error }: { onLogin(request: LoginRequest): Promise<void>; onRegister(event: React.MouseEvent<HTMLAnchorElement>): void; busy: boolean; error: string }) {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -85,7 +95,7 @@ function LoginPanel({ onLogin, onRegister, busy, error }: { onLogin(request: Log
   );
 }
 
-function ConfigPanel({ platform, onNotify }: AccountPageProps) {
+function ConfigPanel({ platform, onNotify, source }: AccountPageProps & { source: AccountDataSource }) {
   const gateway = platform.cliConfig;
   const [statuses, setStatuses] = useState<CliConfigStatus[]>([]);
   const [preview, setPreview] = useState<CliConfigPreview | null>(null);
@@ -152,9 +162,21 @@ function ConfigPanel({ platform, onNotify }: AccountPageProps) {
   };
 
   if (!gateway) return null;
+  const configAvailable = source === "mock";
   return (
     <section className="account-section" aria-labelledby="cli-config-title">
       <div className="account-section__heading"><div><span className="eyebrow">本机模型</span><h2 id="cli-config-title">一键配置 AI 工具</h2><p>先预览，再备份并写入。不会覆盖 MCP、插件或其他未知设置。</p></div><ShieldCheck size={22} /></div>
+      {configAvailable ? (
+        <div className="config-notice config-notice--mock" role="status">
+          <AlertTriangle size={16} />
+          <span><strong>模拟密钥 · 测试配置</strong>当前演示账户可完整验证预览、应用和恢复流程。配置会写入真实的本机文件，但模拟凭据不能用于正式 API 调用。</span>
+        </div>
+      ) : (
+        <div className="config-notice" role="status">
+          <ShieldCheck size={16} />
+          <span><strong>正式 API 尚未接入</strong>模型目录与网关密钥接口就绪前，暂不生成新的正式配置；已有本地备份仍可恢复。</span>
+        </div>
+      )}
       {error ? <p className="account-inline-error" role="alert"><AlertTriangle size={15} />{error}</p> : null}
       <div className="config-targets">
         {(["codex", "claude"] as CliTarget[]).map((target) => {
@@ -162,13 +184,13 @@ function ConfigPanel({ platform, onNotify }: AccountPageProps) {
           return <article className="config-target" key={target}>
             <div className="config-target__icon"><TerminalSquare size={20} /></div>
             <div><h3>{targetName(target)}</h3><p>{status?.path ?? "正在检测配置路径..."}</p><span className={`config-health config-health--${status?.health ?? "missing"}`}>{status?.configuredForNetapi ? "已连接 netapi" : status?.health === "invalid" ? "配置需要修复" : "尚未连接"}</span></div>
-            <button className="button button--secondary" type="button" disabled={Boolean(busy)} onClick={() => void createPreview(target)}>{busy === target ? "生成中..." : "配置"}</button>
+            <button className="button button--secondary" type="button" disabled={Boolean(busy) || !configAvailable} onClick={() => void createPreview(target)}>{busy === target ? "生成中..." : "配置"}</button>
           </article>;
         })}
       </div>
       {preview ? <div className="config-preview" role="dialog" aria-label={`${targetName(preview.target)} 配置预览`}>
         <div className="config-preview__heading"><div><strong>{targetName(preview.target)} 配置预览</strong><span>{preview.path}</span></div><button type="button" onClick={() => setPreview(null)}>关闭</button></div>
-        <ul>{preview.changes.map((change) => <li key={change.field}><span>{change.action === "add" ? "新增" : change.action === "update" ? "更新" : "保留"}</span><code>{change.field}</code><b>{change.after}</b></li>)}</ul>
+        <ul>{preview.changes.map((change) => <li key={change.key}><span>{change.action === "add" ? "新增" : change.action === "update" ? "更新" : "删除"}</span><code>{change.key}</code><b>{previewValue(change.key, change.after)}</b></li>)}</ul>
         {preview.warnings.map((warning) => <p className="config-warning" key={warning}><AlertTriangle size={14} />{warning}</p>)}
         <div className="config-preview__actions"><span>{preview.backupWillBeCreated ? "应用前会自动创建备份" : "此配置没有可备份的原文件"}</span><button className="button button--primary" type="button" disabled={busy === "apply"} onClick={() => void apply()}><Check size={17} />{busy === "apply" ? "正在校验..." : "确认应用"}</button></div>
       </div> : null}
@@ -270,6 +292,6 @@ export function AccountPage({ platform, onNotify }: AccountPageProps) {
       {leaderboardError ? <div className="account-banner" role="alert"><AlertTriangle size={17} /><span>{leaderboardError}</span><button type="button" onClick={() => void loadLeaderboard(true)}><RefreshCw size={15} />重试</button></div> : null}
       <div className="leaderboard"><div className="leaderboard__header"><span>排名</span><span>用户</span><span>Token</span></div>{leaderboard?.rows.length ? leaderboard.rows.map((row) => <div className={row.isCurrentUser ? "is-current" : ""} key={`${row.rank}-${row.userId}`}><b>#{row.rank}</b><span>{row.displayName}{row.isCurrentUser ? <small>你</small> : null}</span><strong>{formatDecimalInteger(row.tokens)}</strong></div>) : <p>{leaderboard ? "今天还没有排行数据" : leaderboardError ? "排行榜加载失败" : "正在加载排行榜..."}</p>}</div>
     </section>
-    <ConfigPanel platform={platform} onNotify={onNotify} />
+    <ConfigPanel platform={platform} onNotify={onNotify} source={session.source} />
   </div>;
 }

@@ -8,12 +8,18 @@ export interface CliConfigStatus {
   configuredForNetapi: boolean;
 }
 
-export type CliConfigChangeAction = "add" | "update" | "preserve";
+export type CliConfigChangeAction = "add" | "update" | "remove";
+
+export type CliConfigPreviewValue =
+  | { kind: "absent" }
+  | { kind: "redacted" }
+  | { kind: "public"; value: string };
 
 export interface CliConfigChange {
-  field: string;
+  key: string;
   action: CliConfigChangeAction;
-  after: string;
+  before: CliConfigPreviewValue;
+  after: CliConfigPreviewValue;
 }
 
 export interface CliConfigPreview {

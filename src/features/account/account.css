@@ -134,6 +134,30 @@
 .config-health--ready { border-color: #9bcac4; background: var(--color-primary-soft); color: var(--color-primary-strong); }
 .config-health--invalid { border-color: #efb8b4; background: var(--color-danger-soft); color: var(--color-danger); }
 
+.config-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-top: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.config-notice--mock {
+  border-color: #d8b46a;
+  background: var(--color-yellow-soft);
+  color: #694706;
+}
+
+.config-notice > svg { flex: 0 0 auto; margin-top: 1px; }
+.config-notice span { display: grid; gap: 2px; }
+.config-notice strong { color: var(--color-text); font-size: 12px; }
+
 .config-preview { margin-top: 12px; padding: 16px; border: 1px solid #9bcac4; border-radius: var(--radius-md); background: #f7fcfb; }
 .config-preview__heading div { display: grid; min-width: 0; gap: 4px; }
 .config-preview__heading span { overflow: hidden; color: var(--color-text-muted); font-family: var(--font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

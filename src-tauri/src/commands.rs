@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -12,8 +12,9 @@ use crate::{
         LeaderboardQuery, LeaderboardSnapshot, LoginRequest,
     },
     cli_config::{
-        CliConfigStatus, CliConfigTarget, ConfigApplyReceipt, ConfigBackupSummary, ConfigError,
-        ConfigErrorCode, ConfigPlanPreview, NetapiConfigIdentity,
+        ClaudeDesiredConfig, CliConfigStatus, CliConfigTarget, CodexDesiredConfig,
+        ConfigApplyReceipt, ConfigBackupSummary, ConfigError, ConfigErrorCode, ConfigPlanPreview,
+        NetapiConfigIdentity,
     },
     domain::LibraryState,
     error::CommandError,
@@ -246,11 +247,37 @@ fn netapi_config_identity() -> NetapiConfigIdentity {
         .unwrap_or_else(|_| "jacobe-skills.exe".into());
     NetapiConfigIdentity {
         base_url: "https://netapi.cc".into(),
-        codex_provider_id: "netapi".into(),
+        codex_provider_id: "netapi-demo".into(),
         codex_auth_command: helper.clone(),
-        codex_auth_args: vec!["credential-helper".into(), "codex".into(), "netapi".into()],
-        claude_api_key_helper: format!("\"{helper}\" credential-helper claude netapi"),
+        codex_auth_args: vec![
+            "credential-helper".into(),
+            "codex".into(),
+            "netapi-demo".into(),
+        ],
+        claude_api_key_helper: format!("\"{helper}\" credential-helper claude netapi-demo"),
     }
+}
+
+fn require_demo_mock_session(session: &AccountSessionView) -> Result<(), String> {
+    let is_demo = session.status == crate::account::SessionStatus::SignedIn
+        && session.source == crate::account::DataSource::Mock
+        && session
+            .user
+            .as_ref()
+            .and_then(|user| user.email.as_deref())
+            .is_some_and(|email| {
+                email.eq_ignore_ascii_case(crate::netapi::MOCK_ACCOUNT_IDENTIFIER)
+            });
+    is_demo
+        .then_some(())
+        .ok_or_else(|| "一键配置目前仅对已登录的本机演示账户开放。".into())
+}
+
+fn add_demo_warning(preview: &mut ConfigPlanPreview) {
+    preview.warnings.insert(
+        0,
+        "这是仅供本机演示的模拟配置，不能用于正式账户或生产调用。".into(),
+    );
 }
 
 #[tauri::command]
@@ -263,9 +290,32 @@ pub fn preview_cli_config(
     state: State<'_, AppState>,
     target: CliConfigTarget,
 ) -> Result<ConfigPlanPreview, String> {
-    let _ = target;
-    let _ = cli_engine(&state)?;
-    Err("当前使用模拟账户数据。netapi.cc 正式模型和网关 Key 接口接入前，不会修改真实配置。".into())
+    let session = state.account.get_session().map_err(account_error)?;
+    require_demo_mock_session(&session)?;
+    let engine = cli_engine(&state)?;
+    let identity = netapi_config_identity();
+    let mut preview = match target {
+        CliConfigTarget::Codex => engine.plan_codex(CodexDesiredConfig {
+            provider_id: identity.codex_provider_id,
+            provider_name: "netapi.cc Demo (Mock only)".into(),
+            base_url: identity.base_url,
+            wire_api: "responses".into(),
+            model: "jacobe-demo-codex".into(),
+            auth_command: identity.codex_auth_command,
+            auth_args: identity.codex_auth_args,
+            allow_replace_existing_provider: false,
+        }),
+        CliConfigTarget::Claude => engine.plan_claude(ClaudeDesiredConfig {
+            base_url: identity.base_url,
+            api_key_helper: identity.claude_api_key_helper,
+            models: BTreeMap::from([("ANTHROPIC_MODEL".into(), "jacobe-demo-claude".into())]),
+            remove_plaintext_auth_token: true,
+            allow_replace_existing_values: false,
+        }),
+    }
+    .map_err(cli_config_error)?;
+    add_demo_warning(&mut preview);
+    Ok(preview)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -274,6 +324,8 @@ pub fn apply_cli_config(
     state: State<'_, AppState>,
     plan_id: String,
 ) -> Result<ConfigApplyReceipt, String> {
+    let session = state.account.get_session().map_err(account_error)?;
+    require_demo_mock_session(&session)?;
     let result = cli_engine(&state)?
         .apply(&plan_id)
         .map_err(cli_config_error)?;
@@ -486,4 +538,77 @@ pub fn set_orb_visible(app: AppHandle, visible: bool) -> Result<DesktopPreferenc
 pub fn set_always_on_top(app: AppHandle, enabled: bool) -> Result<DesktopPreferences, String> {
     windows::set_orb_always_on_top(&app, enabled)?;
     desktop_preferences(&app)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::account::{AccountUser, DataSource, SessionStatus};
+
+    fn session(
+        status: SessionStatus,
+        source: DataSource,
+        email: Option<&str>,
+    ) -> AccountSessionView {
+        AccountSessionView {
+            status,
+            source,
+            user: email.map(|email| AccountUser {
+                id: "test-user".into(),
+                display_name: "Test User".into(),
+                email: Some(email.into()),
+            }),
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn demo_configuration_requires_exact_signed_in_mock_account() {
+        assert!(require_demo_mock_session(&session(
+            SessionStatus::SignedIn,
+            DataSource::Mock,
+            Some(crate::netapi::MOCK_ACCOUNT_IDENTIFIER),
+        ))
+        .is_ok());
+        assert!(require_demo_mock_session(&session(
+            SessionStatus::SignedOut,
+            DataSource::Mock,
+            Some(crate::netapi::MOCK_ACCOUNT_IDENTIFIER),
+        ))
+        .is_err());
+        assert!(require_demo_mock_session(&session(
+            SessionStatus::SignedIn,
+            DataSource::Live,
+            Some(crate::netapi::MOCK_ACCOUNT_IDENTIFIER),
+        ))
+        .is_err());
+        assert!(require_demo_mock_session(&session(
+            SessionStatus::SignedIn,
+            DataSource::Mock,
+            Some("other@example.com"),
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn demo_identity_contains_no_gateway_secret() {
+        let identity = netapi_config_identity();
+        let serialized = serde_json::to_string(&serde_json::json!({
+            "baseUrl": identity.base_url,
+            "provider": identity.codex_provider_id,
+            "command": identity.codex_auth_command,
+            "args": identity.codex_auth_args,
+            "claudeHelper": identity.claude_api_key_helper,
+        }))
+        .unwrap();
+        let credential = match crate::cli_config::parse_credential_helper_args([
+            "credential-helper",
+            "codex",
+            "netapi-demo",
+        ]) {
+            crate::cli_config::CredentialHelperMode::Demo(value) => value,
+            _ => panic!("expected demo credential"),
+        };
+        assert!(!serialized.contains(credential.expose_for_stdout()));
+    }
 }

@@ -40,7 +40,7 @@ Windows 桌面版与 Chrome 扩展使用不同的本地存储，不会自动同�
 
 中转站后端需要开放的接口、字段和安全约束见 [netapi.cc 桌面客户端 API 合同](docs/netapi-api-contract.md)。
 
-“一键配置”引擎仅支持 Codex 的 OpenAI Responses 直连配置与 Claude Code 的 Anthropic Messages 直连配置。应用会先展示脱敏预览，只有用户确认后才备份并修改目标配置；不包含本地代理或协议转换。当前 mock 阶段只检测本机配置，正式模型与网关 Key 接口接入前会阻止预览和写入。
+“一键配置”引擎仅支持 Codex 的 OpenAI Responses 直连配置与 Claude Code 的 Anthropic Messages 直连配置。应用会先展示脱敏预览，只有用户确认后才备份并修改目标配置；不包含本地代理或协议转换。Demo 账户会使用不能用于正式 API 调用的模拟凭据，可以完整测试检测、预览、确认写入、备份和恢复流程。这个流程会修改真实的本机 Codex 或 Claude Code 配置文件，测试前应先关闭相关工具，测试后可从“最近备份”恢复。其他账户在正式模型目录与网关密钥接口接入前不能生成新配置，但仍可恢复已有本地备份。
 
 当前 Alpha 安装包可能尚未进行代码签名，因此 Windows SmartScreen 可能显示“Windows 已保护你的电脑”。仅运行来自可信构建来源的安装包。面向公众测试的安装包应先完成代码签名，或通过 Microsoft Store 分发。
 

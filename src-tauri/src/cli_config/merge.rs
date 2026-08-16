@@ -161,10 +161,10 @@ pub(crate) fn merge_codex(
         &mut changes,
         false,
     );
-    set_toml_bool(
-        &mut provider["requires_openai_auth"],
+    remove_toml_item(
+        provider,
+        "requires_openai_auth",
         &format!("{prefix}.requires_openai_auth"),
-        true,
         &mut changes,
     );
     if provider.get("auth").and_then(Item::as_table).is_none() {
@@ -418,11 +418,7 @@ fn provider_matches(existing: Option<&Item>, desired: &CodexDesiredConfig) -> bo
     toml_string(table.get("name")) == Some(desired.provider_name.as_str())
         && toml_string(table.get("base_url")) == Some(desired.base_url.as_str())
         && toml_string(table.get("wire_api")) == Some(desired.wire_api.as_str())
-        && table
-            .get("requires_openai_auth")
-            .and_then(Item::as_value)
-            .and_then(toml_edit::Value::as_bool)
-            == Some(true)
+        && table.get("requires_openai_auth").is_none()
         && table
             .get("auth")
             .and_then(Item::as_table)
@@ -497,22 +493,25 @@ fn set_toml_redacted_string(
     *item = value(desired);
 }
 
-fn set_toml_bool(
-    item: &mut Item,
+fn remove_toml_item(
+    table: &mut Table,
+    item_name: &str,
     key: &str,
-    desired: bool,
     changes: &mut Vec<ConfigPreviewChange>,
 ) {
-    let before = item.as_value().and_then(toml_edit::Value::as_bool);
-    if before == Some(desired) {
+    let Some(before) = table.remove(item_name) else {
         return;
-    }
-    changes.push(change(
-        key,
-        before.map(|value| PreviewValue::Public(value.to_string())),
-        PreviewValue::Public(desired.to_string()),
-    ));
-    *item = value(desired);
+    };
+    changes.push(ConfigPreviewChange {
+        key: key.to_owned(),
+        action: ConfigChangeAction::Remove,
+        before: before
+            .as_value()
+            .and_then(toml_edit::Value::as_bool)
+            .map(|value| PreviewValue::Public(value.to_string()))
+            .unwrap_or(PreviewValue::Redacted),
+        after: PreviewValue::Absent,
+    });
 }
 
 fn set_toml_array(
@@ -694,6 +693,9 @@ approval_policy = "never"
 [model_providers.other]
 name = "Other"
 base_url = "https://other.example/v1"
+
+[model_providers.netapi]
+requires_openai_auth = true
 "#;
         let result = merge_codex(
             source,
@@ -705,7 +707,7 @@ base_url = "https://other.example/v1"
                 model: "model-a".into(),
                 auth_command: r"C:\Program Files\Jacobe\jacobe-credential-helper.exe".into(),
                 auth_args: vec!["codex".into(), "netapi".into()],
-                allow_replace_existing_provider: false,
+                allow_replace_existing_provider: true,
             },
         )
         .unwrap();
@@ -716,8 +718,11 @@ base_url = "https://other.example/v1"
         assert!(output.contains("[model_providers.netapi]"));
         assert!(output.contains("[model_providers.netapi.auth]"));
         assert!(output.contains("jacobe-credential-helper.exe"));
+        assert!(!output.contains("requires_openai_auth"));
         let preview = serde_json::to_string(&result.changes).unwrap();
         assert!(!preview.contains("jacobe-credential-helper.exe"));
+        assert!(preview.contains("requires_openai_auth"));
+        assert!(preview.contains("remove"));
     }
 
     #[test]

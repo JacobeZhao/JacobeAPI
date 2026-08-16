@@ -19,6 +19,11 @@ const executableDirectory = join(appPath, "Contents", "MacOS");
 const dmgDirectory = join(bundleRoot, "dmg");
 
 function fail(message) {
+  const annotation = message
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+  console.error(`::error::${annotation}`);
   console.error(message);
   process.exit(1);
 }

@@ -1,5 +1,8 @@
 mod atomic;
 mod credential_helper;
+#[cfg(not(windows))]
+mod local_key;
+#[cfg(windows)]
 mod dpapi;
 mod engine;
 mod error;
@@ -7,7 +10,10 @@ mod merge;
 mod paths;
 
 pub use credential_helper::{parse_credential_helper_args, CredentialHelperMode};
+#[cfg(windows)]
 pub use dpapi::DpapiBackupProtector;
+#[cfg(not(windows))]
+pub use local_key::LocalKeyBackupProtector;
 pub use engine::{BackupProtector, ConfigEngine};
 pub use error::{ConfigError, ConfigErrorCode, ConfigResult};
 pub use merge::{ClaudeDesiredConfig, CodexDesiredConfig};

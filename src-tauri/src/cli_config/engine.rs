@@ -602,7 +602,7 @@ mod tests {
         let backups = engine.list_backups().unwrap();
         assert_eq!(backups.len(), 1);
         assert_eq!(backups[0].id, receipt.backup_id);
-        assert_eq!(backups[0].path, r"~\.claude\settings.json");
+        assert_eq!(backups[0].path, CliConfigPaths::display_path(CliConfigTarget::Claude));
         assert!(backups[0].created_at.ends_with('Z'));
 
         let statuses = engine.scan(&NetapiConfigIdentity {

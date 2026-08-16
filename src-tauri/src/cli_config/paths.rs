@@ -32,7 +32,7 @@ impl CliConfigPaths {
         if !user_profile.is_absolute() || has_unsafe_prefix(&user_profile) {
             return Err(ConfigError::new(
                 ConfigErrorCode::UnsafePath,
-                "the Windows user profile path is not safe",
+                "the user profile path is not safe",
             ));
         }
         Ok(Self {
@@ -43,12 +43,14 @@ impl CliConfigPaths {
     }
 
     pub fn discover_from_environment() -> ConfigResult<Self> {
-        let profile = std::env::var_os("USERPROFILE").ok_or_else(|| {
-            ConfigError::new(
-                ConfigErrorCode::UnsupportedPath,
-                "USERPROFILE is not available",
-            )
-        })?;
+        let profile = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .ok_or_else(|| {
+                ConfigError::new(
+                    ConfigErrorCode::UnsupportedPath,
+                    "USERPROFILE/HOME is not available",
+                )
+            })?;
         Self::discover(
             PathBuf::from(profile),
             std::env::var_os("CODEX_HOME").as_deref(),
@@ -65,8 +67,20 @@ impl CliConfigPaths {
 
     pub fn display_path(target: CliConfigTarget) -> String {
         match target {
-            CliConfigTarget::Codex => r"~\.codex\config.toml".into(),
-            CliConfigTarget::Claude => r"~\.claude\settings.json".into(),
+            CliConfigTarget::Codex => {
+                if cfg!(windows) {
+                    r"~\.codex\config.toml".into()
+                } else {
+                    "~/.codex/config.toml".into()
+                }
+            }
+            CliConfigTarget::Claude => {
+                if cfg!(windows) {
+                    r"~\.claude\settings.json".into()
+                } else {
+                    "~/.claude/settings.json".into()
+                }
+            }
         }
     }
 
@@ -143,6 +157,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn discovers_only_fixed_user_paths() {
         let paths = CliConfigPaths::discover(PathBuf::from(r"C:\Users\test"), None, None)
             .expect("fixed paths should be accepted");
@@ -153,6 +168,21 @@ mod tests {
         assert_eq!(
             paths.path_for(CliConfigTarget::Claude),
             Path::new(r"C:\Users\test\.claude\settings.json")
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn discovers_only_fixed_user_paths() {
+        let paths = CliConfigPaths::discover(PathBuf::from("/Users/test"), None, None)
+            .expect("fixed paths should be accepted");
+        assert_eq!(
+            paths.path_for(CliConfigTarget::Codex),
+            Path::new("/Users/test/.codex/config.toml")
+        );
+        assert_eq!(
+            paths.path_for(CliConfigTarget::Claude),
+            Path::new("/Users/test/.claude/settings.json")
         );
     }
 }
